@@ -1,0 +1,15 @@
+streamlit
+pdfplumber
+python-docx
+openpyxl
+pillow
+pdf2image
+pytesseract
+sentence-transformers
+faiss-cpu
+requests
+psycopg2-binary
+sqlalchemy
+alembic
+pgvector
+python-dotenv
