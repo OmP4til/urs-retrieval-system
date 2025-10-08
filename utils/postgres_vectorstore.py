@@ -1,9 +1,10 @@
+
 import os
 from typing import List, Dict, Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from sqlalchemy import func, text
-from .db_models import Document, Requirement, get_session
+from sqlalchemy import text
+from .db_models import Document, Requirement, get_session, init_db
 
 def normalize(vecs: np.ndarray) -> np.ndarray:
     """L2-normalize vectors row-wise."""
@@ -26,63 +27,98 @@ class PostgresVectorStore:
         self.dim = self.embedder.get_sentence_embedding_dimension()
         self.db_url = db_url or os.getenv("DATABASE_URL")
         if not self.db_url:
-            raise ValueError("Database URL must be provided")
-            
-        from .db_models import init_db
-        self.engine = init_db(self.db_url)
+            raise ValueError("Database URL must be provided or set in DATABASE_URL environment variable")
         
-        # Create pgvector extension if it doesn't exist
-        with self.engine.connect() as conn:
-            conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
-            conn.commit()
+        # Initialize database
+        self.engine = init_db(self.db_url)
+        self.current_file = None
+        
+        print(f"PostgresVectorStore initialized with model: {model_name}")
+        print(f"Connected to database")
     
-    def add_document(self, filename: str, requirements: List[Dict[str, Any]]):
-        """Add a document and its requirements to the database.
+    def clear(self, keep_previous: bool = True):
+        """Clear documents from the database.
         
         Args:
-            filename: Name of the document
-            requirements: List of requirements with text and metadata
+            keep_previous: If True, keeps documents from previous files.
+                          If False, clears everything.
         """
         session = get_session(self.engine)
         try:
-            # Create document record
-            doc = Document(filename=filename)
-            session.add(doc)
-            session.flush()  # Get the document ID
-            
-            # Process requirements in batches
-            batch_size = 100
-            for i in range(0, len(requirements), batch_size):
-                batch = requirements[i:i + batch_size]
-                
-                # Generate embeddings for the batch
-                texts = [r["text"] for r in batch]
-                embeddings = self.embedder.encode(texts, convert_to_numpy=True)
-                embeddings = normalize(embeddings)
-                
-                # Create requirement records
-                for req, emb in zip(batch, embeddings):
-                    requirement = Requirement(
-                        document_id=doc.id,
-                        requirement_id=req.get("id"),
-                        text=req["text"],
-                        page_number=req.get("page_number"),
-                        embedding=emb.tolist(),
-                        comments=req.get("comments", []),
-                        responses=req.get("responses", [])
-                    )
-                    session.add(requirement)
-                
-                session.flush()
-            
-            session.commit()
-            return doc.id
-            
+            if not keep_previous:
+                # Clear all documents
+                session.query(Requirement).delete()
+                session.query(Document).delete()
+                session.commit()
+                print("Cleared all documents from database")
+            else:
+                # Keep previous file's documents
+                if self.current_file:
+                    doc = session.query(Document).filter_by(filename=self.current_file).first()
+                    if doc:
+                        session.delete(doc)  # Cascade will delete requirements
+                        session.commit()
+                        print(f"Cleared documents from: {self.current_file}")
         except Exception as e:
             session.rollback()
+            print(f"Error clearing database: {e}")
             raise e
         finally:
             session.close()
+    
+    def add_document(self, text: str, metadata: Dict[str, Any]):
+        """Add a single requirement to the database.
+        
+        Args:
+            text: The requirement text
+            metadata: Dictionary containing source_file, page_number, requirement_id, etc.
+        """
+        if not text or not text.strip():
+            print(f"[WARN] Skipping empty text")
+            return
+        
+        source_file = metadata.get("source_file")
+        if not source_file:
+            raise ValueError("source_file is required in metadata")
+        
+        self.current_file = source_file
+        
+        session = get_session(self.engine)
+        try:
+            # Get or create document
+            doc = session.query(Document).filter_by(filename=source_file).first()
+            if not doc:
+                doc = Document(filename=source_file)
+                session.add(doc)
+                session.flush()
+            
+            # Generate embedding
+            emb = self.embedder.encode(text, convert_to_numpy=True).astype("float32")
+            emb = normalize(emb.reshape(1, -1))[0]
+            
+            # Create requirement
+            requirement = Requirement(
+                document_id=doc.id,
+                requirement_id=metadata.get("requirement_id"),
+                text=text,
+                page_number=metadata.get("page_number"),
+                embedding=emb.tolist(),
+                comments=metadata.get("comments", []),
+                responses=metadata.get("responses", [])
+            )
+            session.add(requirement)
+            session.commit()
+            
+        except Exception as e:
+            session.rollback()
+            print(f"Error adding document: {e}")
+            raise e
+        finally:
+            session.close()
+    
+    def save(self):
+        """Save changes to database (no-op for PostgreSQL, commits happen per transaction)."""
+        print("All changes saved to PostgreSQL")
     
     def search(self, query_text: str, top_k: int = 5, min_score: float = 0.5) -> List[Dict]:
         """Search for similar requirements using cosine similarity.
@@ -90,38 +126,48 @@ class PostgresVectorStore:
         Args:
             query_text: Text to search for
             top_k: Maximum number of results to return
-            min_score: Minimum similarity score threshold
+            min_score: Minimum similarity score threshold (0-1)
+        
+        Returns:
+            List of matching requirements with scores and metadata
         """
-        if not query_text.strip():
+        if not query_text or not query_text.strip():
             return []
-            
+        
         # Generate query embedding
-        query_emb = self.embedder.encode(query_text, convert_to_numpy=True)
+        query_emb = self.embedder.encode(query_text, convert_to_numpy=True).astype("float32")
         query_emb = normalize(query_emb.reshape(1, -1))[0]
         
         session = get_session(self.engine)
         try:
-            # Use pgvector's L2 distance and convert to cosine similarity
-            # cos_sim = 1 - (L2_distance^2 / 2)
-            results = session.execute(text("""
+            # Use cosine similarity: 1 - cosine_distance
+            # pgvector's <=> operator returns cosine distance (0 = identical, 2 = opposite)
+            # cosine similarity = 1 - (cosine_distance / 2)
+            query = text("""
                 SELECT 
+                    r.id,
                     r.requirement_id,
                     r.text,
                     r.page_number,
                     r.comments,
                     r.responses,
                     d.filename,
-                    (1 - (r.embedding <-> :query)^2 / 2) as similarity
+                    1 - (r.embedding <=> CAST(:query_vector AS vector)) as similarity
                 FROM requirements r
                 JOIN documents d ON r.document_id = d.id
-                WHERE (1 - (r.embedding <-> :query)^2 / 2) >= :min_score
-                ORDER BY r.embedding <-> :query
+                WHERE 1 - (r.embedding <=> CAST(:query_vector AS vector)) >= :min_score
+                ORDER BY r.embedding <=> CAST(:query_vector AS vector)
                 LIMIT :top_k
-            """), {
-                "query": query_emb.tolist(),
-                "min_score": min_score,
-                "top_k": top_k
-            })
+            """)
+            
+            results = session.execute(
+                query,
+                {
+                    "query_vector": query_emb.tolist(),
+                    "min_score": min_score,
+                    "top_k": top_k
+                }
+            ).fetchall()
             
             return [{
                 "score": float(row.similarity),
@@ -129,12 +175,17 @@ class PostgresVectorStore:
                     "source_file": row.filename,
                     "page_number": row.page_number,
                     "requirement_id": row.requirement_id,
-                    "comments": row.comments,
-                    "responses": row.responses
+                    "comments": row.comments or [],
+                    "responses": row.responses or []
                 },
-                "text": row.text
+                "text": row.text,
+                "is_from_current": row.filename == self.current_file,
+                "source_file": row.filename
             } for row in results]
             
+        except Exception as e:
+            print(f"Error searching: {e}")
+            return []
         finally:
             session.close()
     
@@ -160,5 +211,11 @@ class PostgresVectorStore:
             if doc:
                 session.delete(doc)
                 session.commit()
+                print(f"Deleted document ID: {document_id}")
+        except Exception as e:
+            session.rollback()
+            print(f"Error deleting document: {e}")
+            raise e
         finally:
             session.close()
+

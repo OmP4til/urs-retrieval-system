@@ -91,7 +91,7 @@ def extract_and_parse_json(text: str, is_batch: bool = True) -> dict:
                         for item in result:
                             if isinstance(item, dict):
                                 if "requirements" in item:
-                                    all_reqs.extend(item["requirements"])
+                                        all_reqs.extend(item["requirements"])
                                 elif "text" in item:
                                     all_reqs.append(item)
                         if all_reqs:
