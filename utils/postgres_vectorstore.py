@@ -66,6 +66,19 @@ class PostgresVectorStore:
         finally:
             session.close()
     
+    def _clean_metadata_for_json(self, data):
+        """Convert any numpy/float32 values to regular Python types for JSON serialization."""
+        if isinstance(data, list):
+            return [self._clean_metadata_for_json(item) for item in data]
+        elif isinstance(data, dict):
+            return {key: self._clean_metadata_for_json(value) for key, value in data.items()}
+        elif hasattr(data, 'item'):  # numpy scalars
+            return data.item()
+        elif isinstance(data, (float, int)):
+            return float(data) if isinstance(data, float) else int(data)
+        else:
+            return data
+
     def add_document(self, text: str, metadata: Dict[str, Any]):
         """Add a single requirement to the database.
         
@@ -96,6 +109,10 @@ class PostgresVectorStore:
             emb = self.embedder.encode(text, convert_to_numpy=True).astype("float32")
             emb = normalize(emb.reshape(1, -1))[0]
             
+            # Clean metadata to ensure JSON serialization compatibility
+            clean_comments = self._clean_metadata_for_json(metadata.get("comments", []))
+            clean_responses = self._clean_metadata_for_json(metadata.get("responses", []))
+            
             # Create requirement
             requirement = Requirement(
                 document_id=doc.id,
@@ -103,8 +120,8 @@ class PostgresVectorStore:
                 text=text,
                 page_number=metadata.get("page_number"),
                 embedding=emb.tolist(),
-                comments=metadata.get("comments", []),
-                responses=metadata.get("responses", [])
+                comments=clean_comments,
+                responses=clean_responses
             )
             session.add(requirement)
             session.commit()

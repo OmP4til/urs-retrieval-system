@@ -1,5 +1,6 @@
 streamlit
 pdfplumber
+PyMuPDF
 python-docx
 openpyxl
 pillow
