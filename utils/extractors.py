@@ -323,19 +323,29 @@ def detect_document_structure(doc) -> Dict[str, Any]:
     
     # Enhanced section patterns for URS documents
     section_patterns = [
-        r'^\d+\.0?\s+[A-Z][^.]*$',  # 1.0 INTRODUCTION, 2.0 SCOPE, etc.
+        r'^\d+\.0\s+[A-Z][^.]*$',  # 1.0 INTRODUCTION, 2.0 SCOPE, etc.
         r'^\d+\.\d+\s+[A-Z][^.]*$',  # 1.1 Purpose, 2.1 Overview, etc.
         r'^\d+\s+[A-Z][A-Z\s]+$',  # 1 INTRODUCTION, 2 SCOPE (all caps)
         r'^[A-Z][A-Z\s]{10,}$',  # Long ALL CAPS HEADERS
         r'^\d+\.\d+\.\d+\s+[A-Z][^.]*$',  # 1.1.1 Sub-requirements
+        r'^\d+\.\d+\.\d+\.\d+\s+[A-Z][^.]*$',  # Deep nesting like 7.2.1.1
     ]
     
-    # Common URS section names
+    # Common URS section names and patterns
     urs_sections = [
-        "introduction", "scope", "objective", "purpose", "functional", "technical", 
-        "operational", "performance", "safety", "environmental", "regulatory", 
-        "compliance", "validation", "qualification", "installation", "training",
-        "documentation", "maintenance", "support", "requirements", "specifications"
+        "approval", "introduction", "scope", "overview", "objective", "purpose", 
+        "functional", "technical", "operational", "performance", "safety", 
+        "environmental", "regulatory", "compliance", "validation", "qualification", 
+        "installation", "training", "documentation", "maintenance", "support", 
+        "requirements", "specifications", "process", "cleaning", "general requirement",
+        "control", "system", "health", "abbreviations", "references", "definitions",
+        "revision history", "vendor acceptance", "statutory regulations"
+    ]
+    
+    # URS-specific table of contents detection
+    toc_indicators = [
+        "table of contents", "contents", "index", "table of content",
+        "sr. no.", "sr.no.", "topics", "page no", "page no."
     ]
     
     current_section = "Introduction"
@@ -458,7 +468,9 @@ def get_docx_comments_with_text_mapping(docx_file_bytes: bytes) -> Dict[str, Dic
                 if comment_id not in comments_dict:
                     continue
 
-                # Get the EXACT text run that contains the comment reference
+                comment_mapped = False
+
+                # Method 1: Get the EXACT text run that contains the comment reference
                 parent_run = ref.xpath('ancestor::w:r', namespaces=OOXML_NS)
                 
                 if parent_run:
@@ -466,37 +478,91 @@ def get_docx_comments_with_text_mapping(docx_file_bytes: bytes) -> Dict[str, Dic
                     run_text_nodes = parent_run[0].xpath('.//w:t', namespaces=OOXML_NS)
                     run_text = clean_extracted_text(''.join([node.text for node in run_text_nodes if node.text]))
                     
-                    if run_text:
+                    if run_text and len(run_text) > 3:  # Only meaningful text
                         if run_text not in text_to_comments:
                             text_to_comments[run_text] = []
                         text_to_comments[run_text].append(comments_dict[comment_id])
+                        comment_mapped = True
                         continue
 
-                # If run-level mapping fails, try paragraph-level but with sentence splitting
-                parent_para = ref.xpath('ancestor::w:p', namespaces=OOXML_NS)
-                
-                if parent_para:
-                    # Get all text from the paragraph
-                    para_text_nodes = parent_para[0].xpath('.//w:t', namespaces=OOXML_NS)
-                    para_text = clean_extracted_text(''.join([node.text for node in para_text_nodes if node.text]))
-                    
-                    if para_text:
-                        # Split paragraph into sentences for more precise mapping
-                        sentences = re.split(r'[.!?]+\s+', para_text)
+                # Method 2: If in a table, try table cell context
+                if not comment_mapped:
+                    parent_cell = ref.xpath('ancestor::w:tc', namespaces=OOXML_NS)
+                    if parent_cell:
+                        # Get all text from the table cell
+                        cell_text_nodes = parent_cell[0].xpath('.//w:t', namespaces=OOXML_NS)
+                        cell_text = clean_extracted_text(''.join([node.text for node in cell_text_nodes if node.text]))
                         
-                        # Map comment to each sentence in the paragraph (still too broad, but better than full para)
-                        for sentence in sentences:
-                            sentence = clean_extracted_text(sentence)
-                            if len(sentence) > 10:  # Only meaningful sentences
-                                if sentence not in text_to_comments:
-                                    text_to_comments[sentence] = []
-                                text_to_comments[sentence].append(comments_dict[comment_id])
+                        if cell_text and len(cell_text) > 3:
+                            # For table cells, be more selective about what we map to
+                            # Split by common delimiters and map to the most relevant part
+                            parts = re.split(r'[:\s]{2,}', cell_text)  # Split on colons and multiple spaces
+                            
+                            # Find the most relevant part (shortest meaningful text that might be a heading/key)
+                            best_part = None
+                            for part in parts:
+                                part = clean_extracted_text(part)
+                                if 3 < len(part) < 50:  # Prefer shorter, meaningful text
+                                    if not best_part or len(part) < len(best_part):
+                                        best_part = part
+                            
+                            if best_part:
+                                if best_part not in text_to_comments:
+                                    text_to_comments[best_part] = []
+                                text_to_comments[best_part].append(comments_dict[comment_id])
+                                comment_mapped = True
+                            else:
+                                # Fallback to full cell text if no good part found
+                                if cell_text not in text_to_comments:
+                                    text_to_comments[cell_text] = []
+                                text_to_comments[cell_text].append(comments_dict[comment_id])
+                                comment_mapped = True
+
+                # Method 3: Enhanced paragraph-level mapping with better precision
+                if not comment_mapped:
+                    parent_para = ref.xpath('ancestor::w:p', namespaces=OOXML_NS)
+                    
+                    if parent_para:
+                        # Get all text from the paragraph
+                        para_text_nodes = parent_para[0].xpath('.//w:t', namespaces=OOXML_NS)
+                        para_text = clean_extracted_text(''.join([node.text for node in para_text_nodes if node.text]))
+                        
+                        if para_text and len(para_text) > 3:
+                            # Only map to paragraph if it's reasonably short (likely a heading or key phrase)
+                            if len(para_text) < 100:
+                                if para_text not in text_to_comments:
+                                    text_to_comments[para_text] = []
+                                text_to_comments[para_text].append(comments_dict[comment_id])
+                                comment_mapped = True
+                            else:
+                                # For longer paragraphs, try to find the most relevant sentence
+                                sentences = re.split(r'[.!?]+\s+', para_text)
+                                
+                                # Look for sentences that might be headings or key phrases
+                                best_sentence = None
+                                for sentence in sentences:
+                                    sentence = clean_extracted_text(sentence)
+                                    if 10 < len(sentence) < 80:  # Reasonable sentence length
+                                        # Prefer sentences with keywords that might indicate sections
+                                        if any(keyword in sentence.lower() for keyword in ['training', 'specification', 'requirement', 'shall', 'must']):
+                                            best_sentence = sentence
+                                            break
+                                        elif not best_sentence:
+                                            best_sentence = sentence
+                                
+                                if best_sentence:
+                                    if best_sentence not in text_to_comments:
+                                        text_to_comments[best_sentence] = []
+                                    text_to_comments[best_sentence].append(comments_dict[comment_id])
+                                    comment_mapped = True
 
             return text_to_comments
 
-    except Exception:
-        # Ignore errors if comments can't be parsed
-        pass
+    except Exception as e:
+        # Log the error for debugging but don't crash
+        print(f"Warning: Error parsing DOCX comments: {e}")
+        import traceback
+        traceback.print_exc()
     return {}
 def get_paragraph_comments(paragraph, comments_dict: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Return list of comment dicts attached to a paragraph.
@@ -700,33 +766,61 @@ def extract_section_based_requirements(doc, file_bytes: bytes) -> List[Dict[str,
                     cell_text = clean_extracted_text(cell.text)
                     row_text_cells.append(cell_text)
                     
-                    # Check if this cell indicates a section change
-                    section_number_match = re.search(r'(\d+\.\d+|\d+\.0|\d+)\s', cell_text)
+                    # Enhanced section detection for URS documents
+                    section_number_match = re.search(r'(\d+\.\d+(\.\d+)?(\.\d+)?|\d+\.0|\d+)\s', cell_text)
                     if section_number_match:
                         section_num = section_number_match.group(1)
-                        # Map section numbers to sections
+                        
+                        # Map section numbers to meaningful sections based on URS structure
                         if section_num.startswith('1'):
-                            row_section = "Introduction"
+                            if '1.0' in section_num:
+                                row_section = "Approval"
+                            else:
+                                row_section = "Introduction"
                         elif section_num.startswith('2'):
-                            row_section = "Scope" 
+                            row_section = "Introduction"
                         elif section_num.startswith('3'):
-                            row_section = "Functional Requirements"
+                            row_section = "Overview" 
                         elif section_num.startswith('4'):
-                            row_section = "Technical Requirements"
+                            row_section = "Statutory Regulations"
                         elif section_num.startswith('5'):
-                            row_section = "Operational Requirements"
+                            row_section = "Process Requirements"
                         elif section_num.startswith('6'):
-                            row_section = "Performance Requirements"
+                            row_section = "Cleaning Requirements"
                         elif section_num.startswith('7'):
-                            row_section = "Safety Requirements"
+                            row_section = "General Requirement Functions"
                         elif section_num.startswith('8'):
-                            row_section = "Environmental Requirements"
+                            row_section = "Installation Requirements"
                         elif section_num.startswith('9'):
-                            row_section = "Compliance Requirements"
+                            row_section = "Health Safety Environment"
                         elif section_num.startswith('10'):
-                            row_section = "Documentation Requirements"
+                            row_section = "Documentation Training"
+                        elif section_num.startswith('11'):
+                            row_section = "References Definitions"
+                        elif section_num.startswith('12'):
+                            row_section = "Abbreviations"
+                        elif section_num.startswith('13'):
+                            row_section = "Revision History"
+                        elif section_num.startswith('14'):
+                            row_section = "Vendor Acceptance"
                         else:
                             row_section = f"Section {section_num}"
+                    
+                    # Also check for common URS keywords in the cell to refine section detection
+                    cell_lower = cell_text.lower()
+                    if not section_number_match:
+                        if any(keyword in cell_lower for keyword in ["control", "operational", "parameter"]):
+                            row_section = "General Requirement Functions"
+                        elif any(keyword in cell_lower for keyword in ["process", "granulation", "flow"]):
+                            row_section = "Process Requirements"
+                        elif any(keyword in cell_lower for keyword in ["cleaning", "cip", "wash"]):
+                            row_section = "Cleaning Requirements"
+                        elif any(keyword in cell_lower for keyword in ["installation", "utility", "connection"]):
+                            row_section = "Installation Requirements"
+                        elif any(keyword in cell_lower for keyword in ["training", "documentation", "manual"]):
+                            row_section = "Documentation Training"
+                        elif any(keyword in cell_lower for keyword in ["safety", "health", "environment", "emergency"]):
+                            row_section = "Health Safety Environment"
                     
                     # INTELLIGENT comment matching with semantic understanding
                     cell_comments = []
@@ -806,11 +900,50 @@ def extract_section_based_requirements(doc, file_bytes: bytes) -> List[Dict[str,
                 if not row_content.strip():
                     continue
                 
+                # Skip table of contents rows (they're not requirements)
+                row_lower = row_content.lower()
+                is_toc_row = (
+                    # Very specific TOC patterns only
+                    (len(row_content.split('|')) <= 3 and  # Simple 2-3 column structure
+                     any(toc_indicator in row_lower for toc_indicator in [
+                         "table of contents", "sr. no", "sr.no", "topics", "page no"
+                     ]) and
+                     # Must have page numbers or just section titles
+                     (re.search(r'\b\d+(-\d+)?\s*$', row_content.strip()) or  # Ends with page numbers
+                      re.search(r'^\d+\.0\s+[A-Z\s]+\s*\d*(-\d+)?$', row_content))) or
+                    
+                    # Header rows that are clearly just navigation
+                    (row_lower in ["sr. no. | topics | page no.", "sr.no | topics | page no", 
+                                   "no. | component/features | description"])
+                )
+                
+                # Be much more selective about what we exclude
+                if is_toc_row:
+                    continue  # Skip only clear table of contents entries
+                
                 # Update current section for subsequent rows
                 current_section = row_section
                 
-                # First row might be header
-                if row_idx == 0 and not row_comments:
+                # Enhanced header detection for URS tables
+                is_header_row = False
+                if row_idx == 0:
+                    # Be more selective about what constitutes a header
+                    header_indicators = [
+                        "sr. no", "sr.no", "topics", "page no", "page no.",
+                        "component", "features", "description"
+                    ]
+                    row_lower = row_content.lower()
+                    
+                    # Only exclude if it's clearly just a header with no content
+                    is_header_row = (
+                        not row_comments and  # Headers typically don't have comments
+                        len(row_content.strip()) < 50 and  # Short header-like content
+                        any(indicator in row_lower for indicator in header_indicators) and
+                        not any(req_word in row_lower for req_word in ["shall", "must", "should", "required", "specification"])
+                    )
+                
+                # Don't skip first rows that contain actual requirements
+                if is_header_row and row_idx == 0:
                     table_header = row_content
                     continue
                 
@@ -1017,30 +1150,199 @@ def map_pdf_annotations_to_requirements(pages_data: List[Dict], annotations: Lis
             for line_info in associated_lines:
                 line_text = line_info.get("line_text", "")
                 
-                # Enhanced requirement detection patterns
+                # Comprehensive URS requirement detection keywords (much more inclusive)
                 requirement_keywords = [
-                    "shall", "must", "should", "will", "requirement", "certificate", 
-                    "test", "report", "material", "metallic", "non-metallic", 
-                    "product", "contact", "parts", "documentation", "validation",
-                    "verification", "compliance", "standard", "specification",
-                    "audit", "trail", "security", "access", "authorization"
+                    # Obligation keywords (strong indicators)
+                    "shall", "must", "should", "will", "require", "required", "necessary", "need", "needs", "needed",
+                    "expect", "expected", "demand", "specify", "specified", "ensure", "provide", "maintain",
+                    
+                    # Technical specification keywords
+                    "specification", "standard", "compliance", "certificate", "certification", "spec", "specs",
+                    "test", "testing", "report", "validation", "verification", "qualification", "analysis", "analytical",
+                    "measure", "measurement", "monitor", "monitoring", "control", "controlled", "verify",
+                    
+                    # Material and construction keywords
+                    "material", "materials", "metallic", "non-metallic", "stainless steel", "aisi", "316l", "304l",
+                    "product contact", "contact parts", "surface roughness", "mirror polished", "construction",
+                    "built", "made", "fabricated", "manufactured", "design", "designed", "finish", "coating",
+                    
+                    # Process and operational keywords
+                    "process", "processing", "operation", "operational", "control", "parameter", "parameters",
+                    "temperature", "pressure", "flow", "speed", "capacity", "range", "limit", "limits",
+                    "alarm", "trip", "setpoint", "operating", "performance", "efficiency", "function",
+                    
+                    # Documentation and training keywords
+                    "documentation", "document", "training", "manual", "procedure", "procedures", "protocol",
+                    "audit", "trail", "security", "access", "authorization", "backup", "record", "records",
+                    "certificate", "certificates", "approval", "approved", "qualification", "qualified",
+                    
+                    # Equipment and system keywords
+                    "equipment", "system", "systems", "machine", "device", "devices", "component", "components",
+                    "assembly", "installation", "maintenance", "service", "support", "unit", "units", "module",
+                    "instrument", "instruments", "tool", "tools", "apparatus", "machinery",
+                    
+                    # Quality and safety keywords
+                    "quality", "safety", "gmp", "cgmp", "fda", "cfr", "part 11", "gamp", "iso", "astm",
+                    "containment", "atex", "hazard", "hazards", "risk", "risks", "emergency", "protection",
+                    "safe", "safer", "secure", "security", "reliable", "reliability",
+                    
+                    # Capacity and measurement keywords
+                    "capacity", "volume", "size", "dimension", "dimensions", "area", "height", "width", "length",
+                    "diameter", "weight", "mass", "density", "thickness", "level", "amount", "quantity",
+                    
+                    # Utility and infrastructure keywords
+                    "utility", "utilities", "power", "electricity", "electrical", "water", "steam", "compressed air",
+                    "nitrogen", "vacuum", "drainage", "ventilation", "hvac", "lighting", "communication",
+                    
+                    # Location and facility keywords
+                    "location", "area", "room", "zone", "space", "facility", "building", "floor", "clean room",
+                    "warehouse", "storage", "environment", "environmental", "atmosphere", "conditions",
+                    
+                    # Personnel and training keywords
+                    "personnel", "staff", "operator", "operators", "technician", "manager", "supervisor",
+                    "qualified", "trained", "competent", "authorized", "responsible", "user", "users",
+                    
+                    # Time and scheduling keywords
+                    "time", "duration", "schedule", "frequency", "interval", "cycle", "batch", "continuous",
+                    "periodic", "regular", "annual", "daily", "weekly", "monthly", "shift",
+                    
+                    # General action keywords
+                    "provide", "supply", "deliver", "install", "configure", "setup", "implement", "execute",
+                    "perform", "conduct", "carry out", "achieve", "accomplish", "complete", "finish",
+                    
+                    # Comparative and range keywords
+                    "minimum", "maximum", "min", "max", "range", "between", "from", "to", "up to", "down to",
+                    "less than", "greater than", "equal", "approximately", "about", "around", "typical",
+                    
+                    # Technical units and measurements
+                    "kg", "g", "mg", "ton", "l", "ml", "m3", "m", "cm", "mm", "inch", "ft", "°c", "°f",
+                    "bar", "psi", "mpa", "pascal", "rpm", "hz", "v", "volt", "amp", "watt", "kw", "mw",
+                    "ph", "ppm", "ppb", "percent", "ratio", "conductivity", "viscosity",
+                    
+                    # Manufacturing and pharmaceutical specific
+                    "batch", "lot", "campaign", "product", "intermediate", "api", "excipient", "tablet",
+                    "capsule", "liquid", "solid", "powder", "granule", "coating", "formulation", "recipe"
                 ]
                 
-                # Check if this line contains requirement-like content
+                # URS-specific patterns for requirement identification
                 line_lower = line_text.lower()
+                line_stripped = line_text.strip()
+                
+                # Pattern 1: Numbered requirements (very strong indicator)
+                numbered_requirement = (
+                    re.search(r'^\d+\.\d+(\.\d+)?\s+', line_stripped) or  # 7.2.1.1, 10.2.3
+                    re.search(r'^[•\-\*]\s*\d+\.\d+', line_stripped) or   # • 7.2.1
+                    re.search(r'^\d+\)\s+', line_stripped) or             # 1) Item
+                    re.search(r'^req\s*no\.?\s*\d+', line_lower) or       # Req No 7.1.1
+                    re.search(r'^sr\.?\s*no\.?\s*\d+', line_lower)        # Sr. No. 1
+                )
+                
+                # Pattern 2: Table-based requirements (common in URS) - much more inclusive
+                table_requirement = (
+                    '|' in line_text and len(line_text.split('|')) >= 2 and
+                    len(line_stripped) > 15 and  # Any meaningful table content
+                    not any(header in line_lower for header in ["sr. no", "sr.no", "page no", "topics"])
+                )
+                
+                # Pattern 3: Specification lines with technical details - more inclusive
+                specification_pattern = (
+                    re.search(r'(temperature|pressure|flow|speed|capacity|voltage|frequency|ph|conductivity|viscosity).*[:=]\s*[\d\w]', line_lower) or
+                    re.search(r'(min|max|minimum|maximum|range|limit|between|from|to)\.?\s*[:=]?\s*\d+', line_lower) or
+                    re.search(r'\d+\s*(bar|°c|°f|rpm|m³/h|kg|g|mg|l|ml|mm|µm|inch|ft|v|amp|watt|hz|psi|mpa|ra\s*≤)', line_lower) or
+                    re.search(r'(supply|operating|design|working|storage|ambient|process)\s+(pressure|temperature|conditions|range)', line_lower) or
+                    re.search(r'\d+.*\s*(percent|%|ppm|ppb|ratio)', line_lower) or
+                    re.search(r'(accuracy|precision|tolerance)\s*[:=±]\s*[\d.]+', line_lower)
+                )
+                
+                # Pattern 4: Compliance and standard references - more inclusive
+                compliance_pattern = (
+                    re.search(r'(comply|compliance|conform|conformance|accordance|conformity)\s+with', line_lower) or
+                    re.search(r'(21\s*cfr|part\s*11|gmp|cgmp|fda|eu|iso\s*\d+|astm|ansi|din|bs|en\s*\d+)', line_lower) or
+                    re.search(r'(standard|standards|guideline|guidelines|regulation|regulations|directive|code|norm)', line_lower) or
+                    re.search(r'(certificate|certification|qualified|approved|validated|verified)', line_lower)
+                )
+                
+                # Pattern 5: Equipment specifications and requirements - much more inclusive
+                equipment_pattern = (
+                    re.search(r'(equipment|system|machine|device|unit|component|instrument|tool|apparatus)', line_lower) or
+                    re.search(r'(material|construction|design|fabrication|manufacturing|installation)', line_lower) or
+                    re.search(r'(provide|supply|deliver|install|configure|setup|implement|include)', line_lower) or
+                    re.search(r'(capacity|volume|size|dimension|area|height|width|length|weight)', line_lower) or
+                    re.search(r'(utility|utilities|power|electrical|water|steam|air|gas|vacuum|drainage)', line_lower)
+                )
+                
+                # Pattern 6: Safety and operational requirements - more inclusive
+                safety_pattern = (
+                    re.search(r'(safety|emergency|alarm|interlock|guard|protection|containment|hazard|risk)', line_lower) or
+                    re.search(r'(training|personnel|operator|qualified|authorized|competent)', line_lower) or
+                    re.search(r'(maintenance|service|cleaning|calibration|repair|replacement)', line_lower) or
+                    re.search(r'(documentation|record|report|manual|procedure|protocol)', line_lower)
+                )
+                
+                # Pattern 7: Process and manufacturing requirements
+                process_pattern = (
+                    re.search(r'(process|processing|operation|batch|lot|campaign|production)', line_lower) or
+                    re.search(r'(control|monitor|measure|test|analyze|verify|validate)', line_lower) or
+                    re.search(r'(pharmaceutical|api|excipient|tablet|capsule|liquid|solid|powder)', line_lower)
+                )
+                
+                # Pattern 8: Any line with technical specifications or numbers
+                technical_pattern = (
+                    re.search(r'\d+.*(?:kg|g|mg|l|ml|m|cm|mm|°c|°f|bar|psi|rpm|v|amp|watt|%|ppm)', line_lower) or
+                    re.search(r'(?:range|between|from|to|up to|down to|approximately|about)\s*\d+', line_lower) or
+                    re.search(r'\d+\s*(?:x|by|×)\s*\d+', line_lower)  # Dimensions like 100 x 200
+                )
+                
+                # Combined requirement detection logic - much more inclusive
                 is_requirement = (
-                    len(line_text) > 15 and  # Reduced minimum length
-                    (any(keyword in line_lower for keyword in requirement_keywords) or
-                     # Pattern matching for certificate requirements
-                     re.search(r'certificate.*for.*\w+', line_lower) or
-                     # Pattern matching for test reports
-                     re.search(r'test\s+report\s+\d+\.\d+', line_lower) or
-                     # Pattern matching for material specifications
-                     re.search(r'material.*\w+.*parts?', line_lower) or
-                     # Pattern matching for numbered requirements
-                     re.search(r'^\d+\.\d+.*', line_text.strip()) or
-                     # Pattern matching for requirements with bullet points
-                     re.search(r'^[•\-\*]\s*', line_text.strip()))
+                    len(line_text) > 8 and  # Reduced minimum length
+                    (
+                        # Strong indicators (high confidence)
+                        numbered_requirement or
+                        table_requirement or
+                        specification_pattern or
+                        compliance_pattern or
+                        equipment_pattern or
+                        safety_pattern or
+                        process_pattern or
+                        technical_pattern or
+                        
+                        # Keyword-based detection (medium confidence) - much more inclusive
+                        (len(line_text) > 15 and 
+                         any(keyword in line_lower for keyword in requirement_keywords) and
+                         not any(exclusion in line_lower for exclusion in [
+                             "table of contents", "page no.", "page no", "revision history", 
+                             "abbreviation", "definition", "reference list", "approval signature",
+                             "document control", "distribution list", "change control"
+                         ])) or
+                        
+                        # Very inclusive catch-all for potential requirements
+                        (len(line_text) > 20 and 
+                         (
+                             # Any line mentioning specifications, requirements, or technical details
+                             any(term in line_lower for term in [
+                                 "requirement", "specification", "standard", "certificate", "test", "report",
+                                 "material", "equipment", "system", "process", "control", "parameter",
+                                 "capacity", "temperature", "pressure", "flow", "safety", "training",
+                                 "documentation", "maintenance", "utility", "design", "construction"
+                             ]) or
+                             
+                             # Any line with technical measurements or ranges
+                             re.search(r'\d+', line_text) and any(unit in line_lower for unit in [
+                                 "kg", "g", "l", "ml", "m", "cm", "mm", "°c", "°f", "bar", "psi", "rpm", "%"
+                             ]) or
+                             
+                             # Any line describing what should be provided/done
+                             any(action in line_lower for action in [
+                                 "provide", "supply", "deliver", "install", "ensure", "maintain", "control",
+                                 "monitor", "verify", "validate", "comply", "conform", "include", "contain"
+                             ])
+                         ) and
+                         not any(exclusion in line_lower for exclusion in [
+                             "table of contents", "page no", "revision", "version", "date",
+                             "author", "approved by", "reviewed by", "signature"
+                         ]))
+                    )
                 )
                 
                 if is_requirement:
@@ -1051,13 +1353,28 @@ def map_pdf_annotations_to_requirements(pages_data: List[Dict], annotations: Lis
                         "keywords": [kw for kw in requirement_keywords if kw in line_lower]
                     })
             
-            # Stage 2: Semantic matching for all requirements on the page
+            # Stage 2: Semantic matching for all potential requirements on the page - much more inclusive
             requirement_lines = [
                 line for line in text_lines 
-                if len(line) > 15 and any(keyword in line.lower() for keyword in [
-                    "shall", "must", "should", "will", "requirement", "certificate", 
-                    "test", "report", "material", "specification", "compliance"
-                ])
+                if len(line) > 12 and (
+                    # Strong requirement indicators
+                    any(keyword in line.lower() for keyword in [
+                        "shall", "must", "should", "will", "requirement", "required", "necessary",
+                        "certificate", "test", "report", "material", "specification", "compliance",
+                        "equipment", "system", "process", "control", "parameter", "capacity",
+                        "temperature", "pressure", "flow", "safety", "training", "documentation",
+                        "maintenance", "utility", "design", "construction", "provide", "supply",
+                        "deliver", "install", "ensure", "maintain", "monitor", "verify", "validate"
+                    ]) or
+                    # Any line with technical measurements
+                    (re.search(r'\d+', line) and any(unit in line.lower() for unit in [
+                        "kg", "g", "mg", "l", "ml", "m3", "m", "cm", "mm", "°c", "°f", "bar", "psi", 
+                        "rpm", "v", "amp", "watt", "hz", "%", "ppm", "ppb"
+                    ])) or
+                    # Table content (if contains |)
+                    ('|' in line and len(line.split('|')) >= 2 and 
+                     not any(header in line.lower() for header in ["sr. no", "page no", "topics"]))
+                )
             ]
             
             semantic_matches = semantic_matcher.find_best_semantic_matches(
