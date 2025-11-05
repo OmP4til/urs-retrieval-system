@@ -11,11 +11,21 @@ import streamlit as st
 from dotenv import load_dotenv
 import time
 
-from utils.extractors import extract_structured_content
-from utils.preprocess import rule_based_requirements
+from utils.extractors import extract_structured_content, extract_with_gemini_enhancement, batch_enhance_requirements_with_gemini
+from utils.preprocess import rule_based_requirements, enhanced_rule_based_requirements, count_all_requirements, extract_all_requirements
 from utils.postgres_vectorstore import PostgresVectorStore
 from utils.ollama_client import call_ollama_generate
 from utils.json_helper import extract_and_parse_json
+
+# Configuration imports
+try:
+    from config import GEMINI_API_KEY, USE_GEMINI_PREPROCESSING, EXTRACTION_MODE, CONFIDENCE_THRESHOLD
+    GEMINI_CONFIGURED = GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here"
+except ImportError:
+    GEMINI_CONFIGURED = False
+    USE_GEMINI_PREPROCESSING = False
+    EXTRACTION_MODE = "enhanced"
+    CONFIDENCE_THRESHOLD = 0.7
 
 # Load environment variables
 load_dotenv()
@@ -64,6 +74,42 @@ with st.sidebar:
 
 # ---------------- Sidebar Controls ----------------
 st.sidebar.header("Settings")
+
+# Gemini Pro Configuration
+st.sidebar.subheader("Gemini Pro Settings")
+use_gemini = st.sidebar.checkbox(
+    "Enable Gemini Pro Enhancement", 
+    value=USE_GEMINI_PREPROCESSING and GEMINI_CONFIGURED,
+    help="Use Google Gemini Pro for intelligent requirement extraction and categorization"
+)
+
+gemini_api_key = st.sidebar.text_input(
+    "Gemini API Key", 
+    value=GEMINI_API_KEY if GEMINI_CONFIGURED else "",
+    type="password",
+    help="Enter your Google AI API key for Gemini Pro"
+)
+
+extraction_mode = st.sidebar.selectbox(
+    "Extraction Mode",
+    options=["basic", "enhanced", "gemini_enhanced"],
+    index=2 if use_gemini and gemini_api_key else 1,
+    help="Choose the extraction method: basic (rule-based), enhanced (improved patterns), or gemini_enhanced (AI-powered)"
+)
+
+confidence_threshold = st.sidebar.slider(
+    "Confidence Threshold",
+    min_value=0.1,
+    max_value=1.0,
+    value=CONFIDENCE_THRESHOLD,
+    step=0.1,
+    help="Minimum confidence level for extracted requirements (only applies to Gemini mode)"
+)
+
+if use_gemini and not gemini_api_key:
+    st.sidebar.warning("⚠️ Gemini API key required for enhanced extraction")
+
+st.sidebar.divider()
 
 # Ollama settings
 default_ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -138,44 +184,93 @@ if st.sidebar.button("📥 Index Files"):
             f.seek(0)
             status_text.text(f"📄 Processing {f.name}...")
             
-            pages = extract_structured_content(f)
+            # Choose extraction method based on user selection
+            if extraction_mode == "gemini_enhanced" and use_gemini and gemini_api_key:
+                st.sidebar.info(f"🤖 Using Gemini Pro for {f.name}")
+                pages = extract_with_gemini_enhancement(f, gemini_api_key)
+            else:
+                pages = extract_structured_content(f)
             
             if not pages:
                 st.sidebar.warning(f"No pages in {f.name}")
                 continue
+            
+            # Display extraction statistics
+            total_page_count = len(pages)
+            potential_req_count = count_all_requirements(pages)
+            gemini_req_count = sum(p.get("requirement_count", 0) for p in pages if p.get("gemini_processed"))
+            
+            if gemini_req_count > 0:
+                st.sidebar.success(f"🤖 {f.name}: {total_page_count} pages, ~{potential_req_count} rule-based + {gemini_req_count} Gemini requirements")
+            else:
+                st.sidebar.info(f"📊 {f.name}: {total_page_count} pages, ~{potential_req_count} potential requirements detected")
 
-            # First try rule-based extraction for all pages
+            # Extract requirements based on selected mode
             all_requirements = []
             uncertain_pages = []
             
-            status_text.text(f"📄 {f.name}: Rule-based extraction...")
+            status_text.text(f"📄 {f.name}: Extracting requirements using {extraction_mode} mode...")
             for page_idx, page in enumerate(pages):
                 page_text = page.get("content", "")
                 page_comments = page.get("comments", []) or []
                 page_section = page.get("section", "Unknown Section")
                 page_req_id = page.get("requirement_id", f"R{page_idx+1}")
                 
+                # Skip empty pages
                 if not page_text.strip():
                     continue
                 
-                # Try rule-based first
-                reqs = rule_based_requirements(page_text)
+                # Check if this is a Gemini-processed requirement
+                if page.get("gemini_processed") and page.get("source") == "gemini_pro":
+                    # This is already a processed requirement from Gemini
+                    confidence = page.get("confidence", 1.0)
+                    if confidence >= confidence_threshold:
+                        all_requirements.append({
+                            "text": page_text,
+                            "page": page.get("original_page", page_idx + 1),
+                            "source": "gemini-pro",
+                            "comments": page_comments,
+                            "section": page_section,
+                            "requirement_id": page_req_id,
+                            "category": page.get("category", "technical"),
+                            "priority": page.get("priority", "standard"),
+                            "confidence": confidence
+                        })
+                    continue
+                
+                # For non-Gemini pages, use selected extraction method
+                reqs = []
+                if extraction_mode == "basic":
+                    reqs = rule_based_requirements(page_text)
+                elif extraction_mode == "enhanced":
+                    reqs = enhanced_rule_based_requirements(page_text)
+                    if not reqs:
+                        reqs = rule_based_requirements(page_text)
+                else:  # comprehensive/fallback
+                    reqs = extract_all_requirements(page_text)
+                    if not reqs:
+                        reqs = enhanced_rule_based_requirements(page_text)
+                    if not reqs:
+                        reqs = rule_based_requirements(page_text)
                 
                 if len(reqs) > 0:
                     all_requirements.extend([{
                         "text": r,
                         "page": page_idx + 1,
-                        "source": "rule-based",
+                        "source": f"{extraction_mode}-extraction",
                         "comments": page_comments,
                         "section": page_section,
-                        "requirement_id": page_req_id
+                        "requirement_id": page_req_id,
+                        "category": "technical",  # Default for non-Gemini
+                        "priority": "standard",
+                        "confidence": 0.8
                     } for r in reqs])
                 else:
                     # Only add to uncertain if page has substantial content
-                    if len(page_text.strip()) > 100:
+                    if len(page_text.strip()) > 50:  # Reduced threshold from 100
                         uncertain_pages.append((page_idx + 1, page_text, page_comments, page_section, page_req_id))
             
-            status_text.text(f"📄 {f.name}: Found {len(all_requirements)} via rules, {len(uncertain_pages)} pages for LLM")
+            status_text.text(f"📄 {f.name}: Found {len(all_requirements)} via comprehensive extraction, {len(uncertain_pages)} pages for LLM")
             
             # Only use LLM for pages where rule-based extraction found nothing
             if uncertain_pages and use_ollama:
@@ -335,7 +430,7 @@ if uploaded_new is not None:
                 all_requirements = []
                 uncertain_pages = []
                 
-                # Rule-based extraction first
+                # Comprehensive extraction first
                 for page_idx, page in enumerate(pages_for_indexing):
                     page_text = page.get("content", "")
                     page_comments = page.get("comments", []) or []
@@ -345,21 +440,27 @@ if uploaded_new is not None:
                     if not page_text.strip():
                         continue
                     
-                    # Try rule-based first
-                    reqs = rule_based_requirements(page_text)
+                    # Use COMPREHENSIVE extraction (enhanced + splitting)
+                    reqs = extract_all_requirements(page_text)
+                    
+                    # Fallback chain if comprehensive returns nothing
+                    if not reqs:
+                        reqs = enhanced_rule_based_requirements(page_text)
+                    if not reqs:
+                        reqs = rule_based_requirements(page_text)
                     
                     if len(reqs) > 0:
                         all_requirements.extend([{
                             "text": r,
                             "page": page_idx + 1,
-                            "source": "rule-based",
+                            "source": "comprehensive-extraction",
                             "comments": page_comments,
                             "section": page_section,
                             "requirement_id": page_req_id
                         } for r in reqs])
                     else:
                         # Only add to uncertain if page has substantial content
-                        if len(page_text.strip()) > 100:
+                        if len(page_text.strip()) > 50:  # Reduced threshold
                             uncertain_pages.append((page_idx + 1, page_text, page_comments, page_section, page_req_id))
                 
                 # Use LLM for uncertain pages if enabled
@@ -536,7 +637,13 @@ PAGE:\n{page_text[:3000]}"""
                         st.warning(f"⚠️ Ollama failed {req_id}: {str(e)[:100]}")
 
                 if not extracted:
-                    reqs = rule_based_requirements(page_text)
+                    # Use comprehensive extraction as primary, with fallback chain
+                    reqs = extract_all_requirements(page_text)
+                    if not reqs:
+                        reqs = enhanced_rule_based_requirements(page_text)
+                    if not reqs:
+                        reqs = rule_based_requirements(page_text)
+                    
                     extracted = {
                         "requirements": [
                             {"id": f"R{page_num}_{i+1}", "text": r, "short": r[:100], "type": "other"}
