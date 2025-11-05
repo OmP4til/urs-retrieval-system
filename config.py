@@ -1,7 +1,14 @@
 # Configuration file for URS Retrieval System
 
+# Load environment variables
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Gemini Pro API Configuration
-GEMINI_API_KEY = "AIzaSyB11bQkqmA-ucJv9yjKAyYLRYJxVfEaLG0"  # Replace with your actual API key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Set this as an environment variable
 GEMINI_MODEL = "models/gemini-2.5-flash"  # Updated to use the correct model name
 
 # Processing Configuration
