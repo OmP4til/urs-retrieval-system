@@ -1,8 +1,8 @@
 # Configuration file for URS Retrieval System
 
 # Gemini Pro API Configuration
-GEMINI_API_KEY = "your_gemini_api_key_here"  # Replace with your actual API key
-GEMINI_MODEL = "gemini-pro"
+GEMINI_API_KEY = "AIzaSyB11bQkqmA-ucJv9yjKAyYLRYJxVfEaLG0"  # Replace with your actual API key
+GEMINI_MODEL = "models/gemini-2.5-flash"  # Updated to use the correct model name
 
 # Processing Configuration
 USE_GEMINI_PREPROCESSING = True  # Set to True to enable Gemini preprocessing

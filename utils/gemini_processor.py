@@ -20,13 +20,13 @@ class GeminiProcessor:
     Processes documents using Gemini Pro for intelligent requirement extraction.
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-pro"):
+    def __init__(self, api_key: str, model_name: str = "models/gemini-2.5-flash"):
         """
         Initialize the Gemini processor with API key.
         
         Args:
             api_key: Google AI API key for Gemini Pro
-            model_name: Gemini model to use (default: gemini-pro)
+            model_name: Gemini model to use (default: models/gemini-2.5-flash)
         """
         self.api_key = api_key
         self.model_name = model_name
