@@ -10,6 +10,51 @@ from lxml import etree
 import zipfile
 import openpyxl
 
+def extract_text_from_docx(uploaded_file) -> str:
+    """
+    Extract complete text content from a DOCX file for holistic analysis.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object or file-like object
+        
+    Returns:
+        Complete text content of the document
+    """
+    try:
+        # Read file bytes
+        if hasattr(uploaded_file, 'read'):
+            file_bytes = uploaded_file.read()
+            uploaded_file.seek(0)
+        else:
+            with open(uploaded_file, 'rb') as f:
+                file_bytes = f.read()
+        
+        # Load document
+        doc = Document(io.BytesIO(file_bytes))
+        
+        full_text = []
+        
+        # Extract all paragraph text
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                full_text.append(paragraph.text.strip())
+        
+        # Extract all table text
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = []
+                for cell in row.cells:
+                    if cell.text.strip():
+                        row_text.append(cell.text.strip())
+                if row_text:
+                    full_text.append(" | ".join(row_text))
+        
+        return "\n\n".join(full_text)
+        
+    except Exception as e:
+        print(f"Error extracting text from DOCX: {e}")
+        return ""
+
 # Gemini integration
 try:
     from .gemini_processor import GeminiProcessor
@@ -1676,3 +1721,154 @@ def preprocess_document_with_gemini(file_content: str, api_key: str = None) -> D
     except Exception as e:
         print(f"Error in Gemini preprocessing: {e}")
         return {"processed": False, "content": file_content, "error": str(e)}
+
+
+def extract_text_from_pdf(uploaded_file) -> str:
+    """
+    Extract complete text content from a PDF file including comments and annotations.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object or file-like object
+        
+    Returns:
+        Complete text content of the PDF including annotations
+    """
+    try:
+        # Read file bytes
+        if hasattr(uploaded_file, 'read'):
+            file_bytes = uploaded_file.read()
+            uploaded_file.seek(0)
+        else:
+            with open(uploaded_file, 'rb') as f:
+                file_bytes = f.read()
+        
+        full_text = []
+        
+        # Use pdfplumber for main text extraction
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page_num, page in enumerate(pdf.pages, 1):
+                # Extract main text
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    full_text.append(f"=== PAGE {page_num} ===")
+                    full_text.append(page_text.strip())
+        
+        # Try to extract annotations/comments if PyMuPDF is available
+        if PDF_ANNOTATIONS_AVAILABLE:
+            try:
+                pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
+                
+                for page_num in range(pdf_doc.page_count):
+                    page = pdf_doc[page_num]
+                    annotations = page.annots()
+                    
+                    if annotations:
+                        full_text.append(f"\n=== COMMENTS/ANNOTATIONS PAGE {page_num + 1} ===")
+                        
+                        for annot in annotations:
+                            annot_dict = annot.info
+                            annot_type = annot_dict.get('type', 'Unknown')
+                            content = annot_dict.get('content', '')
+                            author = annot_dict.get('title', 'Unknown Author')
+                            
+                            if content and content.strip():
+                                full_text.append(f"[{annot_type}] {author}: {content.strip()}")
+                
+                pdf_doc.close()
+                
+            except Exception as e:
+                print(f"Warning: Could not extract PDF annotations: {e}")
+        
+        return "\n\n".join(full_text)
+        
+    except Exception as e:
+        print(f"Error extracting text from PDF: {e}")
+        return ""
+
+
+def extract_text_from_excel(uploaded_file) -> str:
+    """
+    Extract complete text content from an Excel file including cell comments.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object or file-like object
+        
+    Returns:
+        Complete text content of the Excel file including comments
+    """
+    try:
+        # Read file bytes
+        if hasattr(uploaded_file, 'read'):
+            file_bytes = uploaded_file.read()
+            uploaded_file.seek(0)
+        else:
+            with open(uploaded_file, 'rb') as f:
+                file_bytes = f.read()
+        
+        # Load workbook
+        workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
+        
+        full_text = []
+        
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            full_text.append(f"=== SHEET: {sheet_name} ===")
+            
+            # Extract cell values
+            sheet_content = []
+            for row in sheet.iter_rows():
+                row_data = []
+                for cell in row:
+                    if cell.value is not None:
+                        row_data.append(str(cell.value).strip())
+                if row_data and any(row_data):  # Only add non-empty rows
+                    sheet_content.append(" | ".join(row_data))
+            
+            if sheet_content:
+                full_text.extend(sheet_content)
+            
+            # Extract cell comments
+            comments_found = False
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if cell.comment:
+                        if not comments_found:
+                            full_text.append(f"\n=== COMMENTS IN {sheet_name} ===")
+                            comments_found = True
+                        
+                        cell_ref = cell.coordinate
+                        comment_text = cell.comment.text if hasattr(cell.comment, 'text') else str(cell.comment)
+                        author = getattr(cell.comment, 'author', 'Unknown Author') if hasattr(cell.comment, 'author') else 'Unknown Author'
+                        
+                        full_text.append(f"[{cell_ref}] {author}: {comment_text}")
+        
+        workbook.close()
+        return "\n\n".join(full_text)
+        
+    except Exception as e:
+        print(f"Error extracting text from Excel: {e}")
+        return ""
+
+
+def extract_text_from_file(uploaded_file, filename: str) -> str:
+    """
+    Universal text extractor that handles different file types.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object or file-like object
+        filename: Name of the file to determine the type
+        
+    Returns:
+        Complete text content including comments/annotations
+    """
+    file_extension = filename.lower().split('.')[-1]
+    
+    if file_extension in ['docx', 'doc']:
+        return extract_text_from_docx(uploaded_file)
+    elif file_extension == 'pdf':
+        return extract_text_from_pdf(uploaded_file)
+    elif file_extension in ['xlsx', 'xls']:
+        return extract_text_from_excel(uploaded_file)
+    else:
+        print(f"Unsupported file type: {file_extension}")
+        return ""

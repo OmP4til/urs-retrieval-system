@@ -600,7 +600,7 @@ Return JSON format:
     def extract_requirements_with_comments_holistically(self, full_document_text: str, document_name: str = "Document", file_bytes: bytes = None) -> Dict[str, Any]:
         """
         Enhanced holistic extraction that extracts both requirements AND their associated comments.
-        This integrates both requirement extraction and comment extraction in one comprehensive analysis.
+        Uses actual DOCX comment structure for precise mapping instead of relying on text-based guessing.
         
         Args:
             full_document_text: Complete document text
@@ -619,50 +619,46 @@ Return JSON format:
                 from utils.extractors import get_docx_comments_with_text_mapping
                 structured_comments = get_docx_comments_with_text_mapping(file_bytes)
                 logger.info(f"Found {len(structured_comments)} text segments with comments in DOCX")
+                
+                # Debug: Show what comment text we found
+                if structured_comments:
+                    logger.info("Sample comment mappings from DOCX:")
+                    for i, (text, comments) in enumerate(list(structured_comments.items())[:3]):
+                        logger.info(f"  Text: '{text[:80]}...' -> {len(comments)} comments")
+                        for comment in comments[:2]:
+                            logger.info(f"    Comment: '{comment['text'][:60]}...' by {comment.get('author', 'Unknown')}")
             except Exception as e:
                 logger.warning(f"Could not extract structured comments: {e}")
         
-        # Step 2: Use Gemini for comprehensive analysis including comment detection
+        # Step 2: Use Gemini ONLY for requirement extraction (not comment detection)
+        # Comments will be matched using actual DOCX structure
         enhanced_prompt = f"""
-        You are an expert technical document analyst. Analyze this complete {document_name} and perform precise requirement-comment extraction with EXACT PAIRING.
-
-        CRITICAL TASK: Extract requirements and their SPECIFIC associated comments with precise linking.
+        You are an expert technical document analyst. Analyze this complete {document_name} and extract ALL requirements with high precision.
 
         DOCUMENT TO ANALYZE:
         {full_document_text}
 
         EXTRACTION RULES:
-        1. **REQUIREMENT IDENTIFICATION**: Look for specifications, constraints, obligations, functional needs
-        2. **COMMENT IDENTIFICATION**: Find responses, feedback, clarifications that relate to specific requirements
-        3. **PRECISE LINKING**: Each comment must be linked to its exact associated requirement
-        4. **AUTHOR DETECTION**: Identify who made each comment (look for signatures like "GLATT:", "Engineering:", etc.)
-        5. **SPATIAL PROXIMITY**: Comments usually appear near their related requirements in the document
+        1. **REQUIREMENT IDENTIFICATION**: Extract specifications, constraints, obligations, functional needs
+        2. **CLEAR TEXT**: Each requirement should be standalone and clear
+        3. **CATEGORIZATION**: Classify by type (functional/safety/performance/compliance/design/etc)
+        4. **CONTEXT**: Note the section/context where each requirement appears
+        5. **PRIORITY**: Assess importance (critical/high/medium/low)
 
-        COMMENT PATTERNS TO LOOK FOR:
-        - Company responses: "GLATT will provide...", "Engineering confirms..."  
-        - Vendor feedback: "We offer...", "Available as standard...", "Optional feature..."
-        - Technical clarifications: "This means...", "Specification details..."
-        - Status updates: "Completed", "In progress", "Not applicable"
-        - Questions/concerns: "Need clarification on...", "Issue with..."
+        IMPORTANT: Do NOT try to extract "comments" or "responses" - focus ONLY on requirements.
+        We will match comments to requirements using document structure separately.
 
-        OUTPUT FORMAT: Return a JSON object with EXACT requirement-comment pairing:
+        OUTPUT FORMAT: Return a JSON object with requirements only:
         {{
             "requirements": [
                 {{
                     "id": "REQ_001",
                     "text": "Exact requirement text from document", 
-                    "category": "functional/safety/performance/interface/data/etc",
+                    "category": "functional/safety/performance/interface/data/compliance/design/etc",
                     "confidence": 0.95,
                     "source_context": "Document section where this requirement appears",
                     "priority": "critical/high/medium/low",
-                    "specific_comments": [
-                        {{
-                            "comment_text": "Exact comment text that relates to THIS requirement",
-                            "author": "Who made this comment",  
-                            "comment_type": "vendor_response/clarification/confirmation/objection",
-                            "confidence": 0.9
-                        }}
-                    ]
+                    "specific_comments": []
                 }},
                 {{
                     "id": "REQ_002", 
@@ -670,24 +666,17 @@ Return JSON format:
                     "category": "performance",
                     "confidence": 0.92,
                     "source_context": "Section B.2",
-                    "priority": "high",
-                    "specific_comments": []  // This requirement has no associated comments
+                    "priority": "critical/high/medium/low",
+                    "specific_comments": []
                 }}
             ]
         }}
 
-        CRITICAL SUCCESS FACTORS:
-        - Each requirement gets ONLY its own associated comments (not all comments)
-        - If a requirement has no comments, its "specific_comments" array should be empty []
-        - Comments must be precisely matched to their requirements based on document context and proximity
-        - Don't assign the same comment to multiple requirements unless it truly applies to both
-        - Be very careful about comment-requirement relationships - accuracy is more important than completeness
-
-        Analyze the document carefully and provide precise requirement-comment pairing.
+        Focus on extracting clear, precise requirements. Comment matching will be handled separately.
         """
         
         try:
-            logger.info(f"Performing comprehensive Gemini analysis - {len(full_document_text)} characters")
+            logger.info(f"Performing Gemini requirement extraction - {len(full_document_text)} characters")
             
             response = self.model.generate_content(enhanced_prompt)
             
@@ -725,25 +714,74 @@ Return JSON format:
                 
                 logger.info(f"Extracted {len(requirements)} requirements with {total_comments} total associated comments")
                 
-                # Process structured comments from DOCX if available  
+                # IMPROVED: Process structured comments from DOCX with better matching
                 if structured_comments:
-                    logger.info("Merging with structured DOCX comments...")
-                    # Try to match structured comments to requirements based on text proximity
+                    logger.info(f"Matching {len(structured_comments)} DOCX comment sections with requirements using semantic similarity...")
+                    
+                    # Import semantic matcher
+                    try:
+                        from utils.extractors import get_semantic_matcher
+                        semantic_matcher = get_semantic_matcher()
+                    except:
+                        semantic_matcher = None
+                        logger.warning("Semantic matcher not available, using simple text matching")
+                    
+                    # For each requirement, find the best matching comment text from DOCX
                     for req_pair in requirement_comment_pairs:
-                        req_text = req_pair['requirement'].get('text', '').lower()
+                        req_text = req_pair['requirement'].get('text', '').strip()
                         
-                        # Find DOCX comments that might relate to this requirement
-                        for text, docx_comments in structured_comments.items():
-                            # Simple text matching - could be improved with better NLP
-                            if any(word in text.lower() for word in req_text.split()[:5]):  # Check first 5 words
-                                for docx_comment in docx_comments:
+                        if not req_text:
+                            continue
+                        
+                        # Find all comment texts from DOCX that might match
+                        best_match = None
+                        best_similarity = 0.0
+                        
+                        for docx_text, docx_comments in structured_comments.items():
+                            # Calculate similarity between requirement and DOCX text that has comments
+                            if semantic_matcher:
+                                similarity = semantic_matcher.calculate_semantic_similarity(req_text, docx_text)
+                            else:
+                                # Fallback to simple word overlap
+                                req_words = set(req_text.lower().split())
+                                docx_words = set(docx_text.lower().split())
+                                common = len(req_words & docx_words)
+                                similarity = common / max(len(req_words), len(docx_words), 1)
+                            
+                            # If this is a strong match and better than previous matches
+                            if similarity > best_similarity and similarity > 0.5:  # Threshold of 0.5
+                                best_similarity = similarity
+                                best_match = (docx_text, docx_comments, similarity)
+                        
+                        # If we found a good match, add these DOCX comments to this requirement
+                        if best_match:
+                            matched_text, matched_comments, match_score = best_match
+                            logger.info(f"Matched requirement '{req_text[:60]}...' with DOCX text (similarity: {match_score:.2f})")
+                            logger.info(f"  DOCX text: '{matched_text[:60]}...'")
+                            
+                            # Add DOCX comments to this requirement's comment list
+                            for docx_comment in matched_comments:
+                                # Check if this comment isn't already in the list (avoid duplicates)
+                                comment_text = docx_comment['text']
+                                already_exists = any(
+                                    c.get('comment_text', '') == comment_text 
+                                    for c in req_pair['comments']
+                                )
+                                
+                                if not already_exists:
                                     req_pair['comments'].append({
-                                        'comment_text': docx_comment['text'],
+                                        'comment_text': comment_text,
                                         'author': docx_comment.get('author', 'Unknown'),
                                         'comment_type': 'docx_structured',
-                                        'confidence': 0.7,  # Lower confidence for auto-matched
-                                        'source': 'docx_structured'
+                                        'confidence': match_score,  # Use actual match score
+                                        'source': 'docx_structured',
+                                        'matched_to': matched_text[:100]  # Track what it was matched to
                                     })
+                                    logger.info(f"    Added comment: '{comment_text[:60]}...' by {docx_comment.get('author', 'Unknown')}")
+                    
+                    # Recalculate total comments after merging DOCX comments
+                    total_comments = sum(len(pair.get('comments', [])) for pair in requirement_comment_pairs)
+                    logger.info(f"Total comments after DOCX merge: {total_comments}")
                 
                 return {
                     "requirements": requirements,  # Keep original for compatibility

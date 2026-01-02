@@ -24,6 +24,14 @@ except ImportError:
     GEMINI_PROCESSOR_AVAILABLE = False
     st.error("❌ Gemini processor not available. Please ensure utils/gemini_processor.py exists.")
 
+# Import Master Database Layer
+try:
+    from utils.master_database import MasterDatabase
+    MASTER_DB_AVAILABLE = True
+except ImportError:
+    MASTER_DB_AVAILABLE = False
+    st.warning("⚠️ Master Database module not available. Will skip master database check.")
+
 # Load environment variables
 load_dotenv()
 
@@ -117,28 +125,54 @@ def init_vectorstore():
         st.error(f"❌ Failed to initialize PostgreSQL Gemini connection: {e}")
         st.stop()
 
+@st.cache_resource
+def init_master_database():
+    """Initialize the master database layer."""
+    try:
+        if MASTER_DB_AVAILABLE:
+            master_db = MasterDatabase()
+            return master_db
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ Could not initialize master database: {e}")
+        return None
+
 vectorstore = init_vectorstore()
+master_db = init_master_database()
 
 # Display database status
 with st.sidebar:
     st.header("📊 Database Status")
-    try:
-        docs = vectorstore.get_all_documents()
-        if docs:
-            st.success(f"✅ Connected to PostgreSQL")
-            st.info(f"📚 {len(docs)} documents in database")
-            
-            total_reqs = sum(doc['requirement_count'] for doc in docs)
-            st.info(f"📝 {total_reqs} total requirements")
-            
-            # Show document list
-            with st.expander("📄 Documents", expanded=False):
+    
+    # Master Database Status
+    if master_db:
+        with st.expander("📋 Master Database (Excel)", expanded=True):
+            stats = master_db.get_statistics()
+            st.metric("Total Requirements", stats['total_requirements'])
+            st.metric("With Responses", stats['requirements_with_responses'])
+            st.metric("Without Responses", stats['requirements_without_responses'])
+            st.info("✅ Master DB will be checked first before historical DB")
+    else:
+        st.warning("⚠️ Master Database not available")
+    
+    # Historical PostgreSQL Database Status
+    with st.expander("🗄️ Historical Database (PostgreSQL)", expanded=False):
+        try:
+            docs = vectorstore.get_all_documents()
+            if docs:
+                st.success(f"✅ Connected to PostgreSQL")
+                st.info(f"📚 {len(docs)} documents")
+                
+                total_reqs = sum(doc['requirement_count'] for doc in docs)
+                st.info(f"📝 {total_reqs} total requirements")
+                
+                # Show document list
                 for doc in docs:
                     st.write(f"• **{doc['filename']}**: {doc['requirement_count']} reqs")
-        else:
-            st.warning("⚠️ Database is empty")
-    except Exception as e:
-        st.error(f"❌ Database error: {str(e)}")
+            else:
+                st.warning("⚠️ Database is empty")
+        except Exception as e:
+            st.error(f"❌ Database error: {str(e)}")
 
 # Check for Gemini API key
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
@@ -516,7 +550,24 @@ if uploaded_file is not None:
             st.divider()
             st.subheader("📊 Requirement Matching with Historical Data")
             
-            with st.spinner("🔍 Comparing new requirements with historical database..."):
+            with st.spinner("🔍 Comparing new requirements with Master Database and Historical data..."):
+                # LAYER 1: Check Master Database first (Excel)
+                master_db_matches = {}
+                if master_db:
+                    st.info("🔍 **Layer 1:** Checking Master Database (Excel)...")
+                    for req in requirements:
+                        match = master_db.search_requirement(req['text'], threshold=0.7)
+                        if match:
+                            master_db_matches[req['text']] = match
+                    
+                    if master_db_matches:
+                        st.success(f"✅ Found {len(master_db_matches)} matches in Master Database!")
+                    else:
+                        st.info("ℹ️ No matches found in Master Database")
+                
+                # LAYER 2: Check Historical PostgreSQL Database
+                st.info("🔍 **Layer 2:** Checking Historical PostgreSQL Database...")
+                
                 # Get ALL requirements from database for comparison
                 all_requirements = vectorstore.get_all_requirements()
                 
@@ -531,12 +582,33 @@ if uploaded_file is not None:
                 # Create matching table data
                 matching_data = []
                 
-                # Search each new requirement against existing database
+                # Search each new requirement against both databases
                 for req_idx, req in enumerate(requirements):
                     try:
+                        req_text = req['text']
+                        
+                        # Check if we have a Master DB match first (priority)
+                        if req_text in master_db_matches:
+                            master_match = master_db_matches[req_text]
+                            
+                            matching_data.append({
+                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                'Category': req.get('category', 'Unknown'),
+                                'Priority': req.get('priority', 'Unknown'),
+                                'Matched Requirement': master_match['requirement'][:200] + '...' if len(master_match['requirement']) > 200 else master_match['requirement'],
+                                'Match Source': f"Master DB ({master_match['deviation_id']})",
+                                'Historical Comments': master_match['response'][:150] + '...' if len(master_match['response']) > 150 else master_match['response'],
+                                'Historical Responses': master_match['response'][:150] + '...' if len(master_match['response']) > 150 else master_match['response'],
+                                'Similarity Score': f"{master_match['similarity']:.2f}",
+                                'Has Match': 'Yes - Master DB',
+                                'Match Type': master_match['match_type']
+                            })
+                            continue  # Skip PostgreSQL search if Master DB match found
+                        
+                        # If no Master DB match, search PostgreSQL historical database
                         # Use correct search method from PostgresVectorStoreGemini
                         search_results = vectorstore.search_similar_requirements(
-                            query=req['text'],
+                            query=req_text,
                             top_k=3  # Get top 3 matches
                         )
                         
@@ -587,7 +659,7 @@ if uploaded_file is not None:
                                         matched_comments = "Error parsing comments"
                             
                             matching_data.append({
-                                'New Requirement': req['text'][:200] + '...' if len(req['text']) > 200 else req['text'],
+                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
                                 'Category': req.get('category', 'Unknown'),
                                 'Priority': req.get('priority', 'Unknown'),
                                 'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
@@ -595,12 +667,13 @@ if uploaded_file is not None:
                                 'Historical Comments': matched_comments[:100] + '...' if len(matched_comments) > 100 else matched_comments or 'No comments',
                                 'Historical Responses': matched_responses[:100] + '...' if len(matched_responses) > 100 else matched_responses or 'No responses',
                                 'Similarity Score': f"{best_score:.2f}",
-                                'Has Match': 'Yes'
+                                'Has Match': 'Yes - PostgreSQL',
+                                'Match Type': 'semantic'
                             })
                         else:
-                            # No match found
+                            # No match found in either database
                             matching_data.append({
-                                'New Requirement': req['text'][:200] + '...' if len(req['text']) > 200 else req['text'],
+                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
                                 'Category': req.get('category', 'Unknown'),
                                 'Priority': req.get('priority', 'Unknown'),
                                 'Matched Requirement': 'No historical match found',
@@ -608,7 +681,8 @@ if uploaded_file is not None:
                                 'Historical Comments': '-',
                                 'Historical Responses': '-',
                                 'Similarity Score': '0.00',
-                                'Has Match': 'No'
+                                'Has Match': 'No',
+                                'Match Type': '-'
                             })
                         
                     except Exception as e:
@@ -627,33 +701,109 @@ if uploaded_file is not None:
             if matching_data:
                 import pandas as pd
                 
-                # Create summary statistics
+                # Create enhanced summary statistics
                 total_requirements = len(matching_data)
-                matched_requirements = len([x for x in matching_data if x['Has Match'] == 'Yes'])
-                no_match_requirements = len([x for x in matching_data if x['Has Match'] == 'No'])
+                master_db_matched = len([x for x in matching_data if x.get('Has Match', '').startswith('Yes - Master DB')])
+                postgres_matched = len([x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL'])
+                no_match_requirements = len([x for x in matching_data if x.get('Has Match', '') == 'No'])
                 
                 # Display summary
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("📝 Total New Requirements", total_requirements)
                 with col2:
-                    st.metric("✅ Found Historical Matches", matched_requirements)
+                    st.metric("📋 Master DB Matches", master_db_matched, help="Matched from Excel Master Database")
                 with col3:
-                    st.metric("❌ No Historical Matches", no_match_requirements)
+                    st.metric("🗄️ PostgreSQL Matches", postgres_matched, help="Matched from Historical PostgreSQL Database")
+                with col4:
+                    st.metric("❌ No Matches", no_match_requirements, help="No historical match found")
                 
-                st.subheader("📊 New vs Historical Requirements Comparison")
+                st.subheader("📊 Multi-Layer Requirement Matching Results")
+                st.caption("✅ Master Database checked first, then Historical PostgreSQL database | 📝 You can edit the 'Deviations' column to add your own responses")
                 
-                # Create and display the table
+                # Create and display the table with editable Deviations column
                 display_df = pd.DataFrame(matching_data)
                 
-                # Display the table
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    hide_index=True
+                # Add Deviations column - populate with Master DB responses or empty for user input
+                display_df['Deviations'] = display_df.apply(
+                    lambda row: row.get('Historical Responses', '') if row.get('Has Match', '').startswith('Yes - Master DB') else '',
+                    axis=1
                 )
+                
+                # Reorder columns for better display
+                column_order = [
+                    'New Requirement', 'Category', 'Priority',
+                    'Deviations',  # Editable column - prominently placed
+                    'Has Match', 'Match Source', 'Match Type', 'Similarity Score',
+                    'Matched Requirement', 'Historical Comments', 'Historical Responses'
+                ]
+                
+                # Only include columns that exist
+                column_order = [col for col in column_order if col in display_df.columns]
+                display_df = display_df[column_order]
+                
+                # Use data_editor for editable table
+                edited_df = st.data_editor(
+                    display_df,
+                    width='stretch',
+                    hide_index=True,
+                    column_config={
+                        "Deviations": st.column_config.TextColumn(
+                            "Deviations / Response",
+                            help="Master DB responses shown here. You can edit or add your own response for requirements without matches",
+                            max_chars=500,
+                            width="large"
+                        ),
+                        "New Requirement": st.column_config.TextColumn(
+                            "New Requirement",
+                            width="large"
+                        ),
+                        "Historical Comments": st.column_config.TextColumn(
+                            "Historical Comments",
+                            width="medium"
+                        ),
+                        "Historical Responses": st.column_config.TextColumn(
+                            "Historical Responses",
+                            width="medium"
+                        ),
+                        "Matched Requirement": st.column_config.TextColumn(
+                            "Matched Requirement",
+                            width="medium"
+                        )
+                    },
+                    disabled=['New Requirement', 'Category', 'Priority', 'Has Match', 
+                             'Match Source', 'Match Type', 'Similarity Score', 
+                             'Matched Requirement', 'Historical Comments', 'Historical Responses']  # Only Deviations is editable
+                )
+                
+                # Add export functionality for edited data
+                st.divider()
+                col_export1, col_export2 = st.columns([3, 1])
+                
+                with col_export2:
+                    # Check if user made any edits to Deviations column
+                    user_added_deviations = edited_df[edited_df['Deviations'] != display_df['Deviations']]
+                    
+                    if not user_added_deviations.empty:
+                        st.success(f"✅ {len(user_added_deviations)} deviations edited/added")
+                    
+                    # Export to CSV
+                    csv_data = edited_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Results as CSV",
+                        data=csv_data,
+                        file_name=f"requirement_matching_{filename.replace('.docx', '')}.csv",
+                        mime="text/csv",
+                        help="Download the matching results with your deviations"
+                    )
+                
+                with col_export1:
+                    if not user_added_deviations.empty:
+                        st.info("💡 **Tip:** Your edits are ready to export. Click the download button to save your work.")
+                    else:
+                        st.info("💡 **Tip:** Edit the 'Deviations' column to add responses for requirements without matches, then download.")
             
-            st.success("🎯 Historical matching analysis complete!")
+            st.success("🎯 Multi-layer historical matching analysis complete!")
         
         else:
             st.success("💾 Requirements extracted and stored successfully!")
