@@ -749,7 +749,9 @@ Return JSON format:
                                 similarity = common / max(len(req_words), len(docx_words), 1)
                             
                             # If this is a strong match and better than previous matches
-                            if similarity > best_similarity and similarity > 0.5:  # Threshold of 0.5
+                            # Use threshold 0.5 for DOCX comment mapping (moderate)
+                            # Semantic validation prevents false matches from word overlap
+                            if similarity > best_similarity and similarity > 0.5:
                                 best_similarity = similarity
                                 best_match = (docx_text, docx_comments, similarity)
                         

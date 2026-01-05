@@ -128,24 +128,72 @@ class IntelligentTextMatcher:
     Can match concepts even when different words are used.
     """
     
-    def __init__(self, model_name="all-MiniLM-L6-v2"):
-        """Initialize the semantic matcher with a pre-trained model."""
+    def __init__(self, model_name="all-mpnet-base-v2"):
+        """Initialize the semantic matcher with a pre-trained model.
+        
+        Uses all-mpnet-base-v2 by default - a more powerful semantic model that:
+        - Better understands meaning vs word overlap
+        - Can distinguish between similar words with different meanings
+        - Provides more accurate semantic similarity scores
+        """
         self.model = None
         self.model_name = model_name
         self._cache = {}  # Cache for embeddings
         self._terminology_mappings = self._load_domain_terminology()
+        self._meaning_validators = self._load_meaning_validators()
         
         try:
             from sentence_transformers import SentenceTransformer
             import numpy as np
             from sklearn.metrics.pairwise import cosine_similarity
             self.model = SentenceTransformer(model_name)
-            print(f"Semantic matcher initialized with {model_name}")
+            print(f"Semantic matcher initialized with {model_name} for meaning-based matching")
         except ImportError as e:
             print(f"Required packages not available: {e}")
             print("Install with: pip install sentence-transformers scikit-learn")
         except Exception as e:
             print(f"Failed to load semantic model: {e}")
+    
+    def _load_meaning_validators(self) -> Dict[str, Dict[str, Any]]:
+        """Load validators to detect when words are similar but meanings differ.
+        
+        Returns validators that help distinguish:
+        - Same words, different context (e.g., "system validation" vs "validation system")
+        - Similar words, different meaning (e.g., "print report" vs "report findings")
+        """
+        return {
+            "context_validators": {
+                # Words that change meaning based on context
+                "system": {
+                    "system validation": "process of validating a system",
+                    "validation system": "a system that performs validation",
+                    "system requirement": "requirement for a system",
+                    "requirement system": "system managing requirements"
+                },
+                "print": {
+                    "print report": "physical printing of documents",
+                    "report print": "same as print report",
+                    "print system": "printing hardware/software",
+                    "system print": "printing system configuration"
+                },
+                "control": {
+                    "control system": "system for controlling processes",
+                    "system control": "control over system behavior",
+                    "access control": "managing user access",
+                    "control access": "same as access control"
+                }
+            },
+            "semantic_opposites": [
+                # Word pairs that look similar but mean different things
+                ("manual", "automatic"),
+                ("required", "optional"),
+                ("metallic", "non-metallic"),
+                ("contact", "non-contact"),
+                ("approved", "rejected"),
+                ("compliant", "non-compliant"),
+                ("included", "excluded")
+            ]
+        }
     
     def _load_domain_terminology(self) -> Dict[str, List[str]]:
         """Load domain-specific terminology mappings for URS documents."""
@@ -214,11 +262,18 @@ class IntelligentTextMatcher:
             return np.array([])
     
     def calculate_semantic_similarity(self, text1: str, text2: str) -> float:
-        """Calculate semantic similarity between two texts."""
+        """Calculate semantic similarity based on MEANING, not just word overlap.
+        
+        This method:
+        1. Uses semantic embeddings to understand meaning
+        2. Validates that similar words have similar meanings
+        3. Penalizes matches where words are same but meanings differ
+        """
         if not self.model:
             # Fallback to simple keyword matching
             return self._keyword_similarity(text1, text2)
         
+        # Get semantic embeddings
         emb1 = self._get_embedding(text1)
         emb2 = self._get_embedding(text2)
         
@@ -227,9 +282,14 @@ class IntelligentTextMatcher:
         
         try:
             from sklearn.metrics.pairwise import cosine_similarity
-            # Calculate cosine similarity
-            similarity = cosine_similarity([emb1], [emb2])[0][0]
-            return max(0.0, min(1.0, similarity))  # Clamp to 0-1 range
+            # Calculate cosine similarity (raw semantic score)
+            raw_similarity = cosine_similarity([emb1], [emb2])[0][0]
+            raw_similarity = max(0.0, min(1.0, raw_similarity))
+            
+            # Apply semantic validation to adjust score based on meaning
+            validated_similarity = self._validate_semantic_match(text1, text2, raw_similarity)
+            
+            return validated_similarity
         except Exception as e:
             print(f"Error calculating similarity: {e}")
             return self._keyword_similarity(text1, text2)
@@ -282,6 +342,85 @@ class IntelligentTextMatcher:
             return 0.55  # Medium-high confidence for printer-output relationships
 
         return 0.0
+    
+    def _validate_semantic_match(self, text1: str, text2: str, raw_score: float) -> float:
+        """Validate that high similarity scores represent true semantic matches.
+        
+        Args:
+            text1: First text
+            text2: Second text  
+            raw_score: Raw similarity score from embeddings
+            
+        Returns:
+            Adjusted score that accounts for meaning differences
+        """
+        text1_lower = text1.lower()
+        text2_lower = text2.lower()
+        
+        # Check for semantic opposites (same domain, opposite meaning)
+        for word1, word2 in self._meaning_validators["semantic_opposites"]:
+            has_word1_in_text1 = word1 in text1_lower
+            has_word2_in_text1 = word2 in text1_lower
+            has_word1_in_text2 = word1 in text2_lower
+            has_word2_in_text2 = word2 in text2_lower
+            
+            # If one text has word1 and other has word2, they're opposite meanings
+            if (has_word1_in_text1 and has_word2_in_text2) or (has_word2_in_text1 and has_word1_in_text2):
+                # Penalize heavily - same domain but opposite meaning
+                return raw_score * 0.3
+        
+        # Check for context-dependent meaning differences
+        context_validators = self._meaning_validators["context_validators"]
+        
+        # Look for key context words that change meaning
+        for keyword, contexts in context_validators.items():
+            if keyword in text1_lower and keyword in text2_lower:
+                # Both texts have the keyword - check if context is different
+                text1_contexts = [ctx for ctx in contexts.keys() if ctx in text1_lower]
+                text2_contexts = [ctx for ctx in contexts.keys() if ctx in text2_lower]
+                
+                if text1_contexts and text2_contexts:
+                    # Check if they're talking about different things
+                    text1_meanings = {contexts[ctx] for ctx in text1_contexts}
+                    text2_meanings = {contexts[ctx] for ctx in text2_contexts}
+                    
+                    # If meanings don't overlap, penalize the score
+                    if not text1_meanings.intersection(text2_meanings):
+                        # Same words, different meanings
+                        return raw_score * 0.5
+        
+        # Check word order and structure for context
+        # "system validation" vs "validation system" - different meanings
+        words1 = text1_lower.split()
+        words2 = text2_lower.split()
+        
+        # If high word overlap but different order, verify it's not a meaning change
+        common_words = set(words1).intersection(set(words2))
+        if len(common_words) >= 2:  # At least 2 words in common
+            # Check if key noun-adjective pairs are reversed
+            key_pairs = [("system", "validation"), ("print", "report"), ("access", "control")]
+            for word1, word2 in key_pairs:
+                if word1 in common_words and word2 in common_words:
+                    # Check order in each text
+                    try:
+                        idx1_text1 = words1.index(word1)
+                        idx2_text1 = words1.index(word2)
+                        idx1_text2 = words2.index(word1)
+                        idx2_text2 = words2.index(word2)
+                        
+                        # If order is reversed (e.g., "system validation" vs "validation system")
+                        order_text1 = idx1_text1 < idx2_text1
+                        order_text2 = idx1_text2 < idx2_text2
+                        
+                        if order_text1 != order_text2:
+                            # Word order reversed - might mean different things
+                            # Moderate penalty
+                            return raw_score * 0.7
+                    except ValueError:
+                        pass
+        
+        # If all validation passed, return original score
+        return raw_score
 
     def find_best_semantic_matches(self, query: str, candidates: List[str], threshold: float = 0.3, top_k: int = 5) -> List[Dict[str, Any]]:
         """Find best matching candidate lines for a query using semantic/keyword similarity.

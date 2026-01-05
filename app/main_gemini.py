@@ -115,6 +115,40 @@ def extract_clean_comments(comments_data) -> List[Dict[str, str]]:
 st.set_page_config(page_title="URS Gemini Intelligence", layout="wide")
 st.title("🧠 URS Extraction")
 
+# Semantic Matching Information
+with st.expander("ℹ️ About Semantic Matching (Meaning-Based)", expanded=False):
+    st.markdown("""
+    ### 🎯 Intelligent Meaning-Based Matching
+    
+    This system uses **semantic matching** to understand the **meaning** of requirements, not just word overlap.
+    
+    **Key Features:**
+    - ✅ **Finds true matches**: Different words, same meaning → MATCH
+      - Example: "Provide certificates" ↔ "Supply documentation" ✓
+    
+    - ❌ **Avoids false matches**: Same words, different meaning → NO MATCH
+      - Example: "Metallic materials" ↔ "Non-metallic materials" ✗
+      - Example: "System validation" ↔ "Validation system" ✗
+    
+    **How It Works:**
+    1. **Semantic Embeddings**: Converts text to meaning representations
+    2. **Similarity Calculation**: Measures how similar meanings are
+    3. **Semantic Validation**: Detects false positives (opposite meanings, context differences)
+    
+    **Matching Thresholds:**
+    - 🎯 Master Database: **0.75** (strict - authoritative source)
+    - 📄 DOCX Comments: **0.50** (moderate - same document context)
+    - 🗄️ Historical DB: **0.40** (lenient - cross-document matching)
+    
+    **Match Quality:**
+    - `0.90-1.00`: Excellent (nearly identical meaning)
+    - `0.75-0.89`: Good (same concept, different wording)
+    - `0.60-0.74`: Moderate (related concepts)
+    - `0.40-0.59`: Weak (some similarity)
+    
+    📖 See `SEMANTIC_MATCHING_GUIDE.md` for detailed examples and technical info.
+    """)
+
 # ---------------- Initialize Vector Store (same as standalone script) ----------------
 @st.cache_resource
 def init_vectorstore():
@@ -130,7 +164,11 @@ def init_master_database():
     """Initialize the master database layer."""
     try:
         if MASTER_DB_AVAILABLE:
-            master_db = MasterDatabase()
+            # Use absolute path relative to project root
+            import os
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            excel_path = os.path.join(project_root, "URS Response Automation Master Database.xlsm")
+            master_db = MasterDatabase(excel_path)
             return master_db
         return None
     except Exception as e:
@@ -556,7 +594,9 @@ if uploaded_file is not None:
                 if master_db:
                     st.info("🔍 **Layer 1:** Checking Master Database (Excel)...")
                     for req in requirements:
-                        match = master_db.search_requirement(req['text'], threshold=0.7)
+                        # Use threshold 0.75 for Master DB - stricter for authoritative source
+                        # Ensures high-confidence semantic matches only
+                        match = master_db.search_requirement(req['text'], threshold=0.75)
                         if match:
                             master_db_matches[req['text']] = match
                     
@@ -640,23 +680,31 @@ if uploaded_file is not None:
                                 comments_data = full_matched_req.get('comments')
                                 if comments_data:
                                     try:
-                                        # Handle both string and list formats
-                                        if isinstance(comments_data, str):
-                                            matched_comments = comments_data[:200]
-                                        elif isinstance(comments_data, list):
+                                        # Parse comments properly using the extract_clean_comments function
+                                        clean_comments = extract_clean_comments(comments_data)
+                                        
+                                        if clean_comments:
+                                            # Format comments nicely with full text (not truncated)
                                             comment_texts = []
-                                            for comment in comments_data[:2]:
-                                                if isinstance(comment, dict):
-                                                    text = comment.get('text', '') or comment.get('comment_text', '')
-                                                    author = comment.get('author', 'Unknown')
-                                                    if text:
-                                                        comment_texts.append(f"{author}: {text[:50]}")
-                                                elif isinstance(comment, str):
-                                                    comment_texts.append(comment[:100])
-                                            matched_comments = "; ".join(comment_texts)
+                                            for comment in clean_comments[:3]:  # Show up to 3 comments
+                                                text = comment.get('text', '')
+                                                author = comment.get('author', 'Unknown')
+                                                if text:
+                                                    # Show full comment text, not truncated
+                                                    comment_texts.append(f"[{author}] {text}")
+                                            
+                                            matched_comments = " | ".join(comment_texts)
                                             matched_responses = matched_comments  # Use same data for responses
+                                            
+                                            if len(clean_comments) > 3:
+                                                matched_comments += f" ... (+{len(clean_comments) - 3} more)"
+                                                matched_responses = matched_comments
+                                        else:
+                                            matched_comments = "No comments"
+                                            matched_responses = "No responses"
                                     except Exception as e:
-                                        matched_comments = "Error parsing comments"
+                                        matched_comments = f"Error parsing: {str(e)[:50]}"
+                                        matched_responses = matched_comments
                             
                             matching_data.append({
                                 'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
@@ -664,8 +712,8 @@ if uploaded_file is not None:
                                 'Priority': req.get('priority', 'Unknown'),
                                 'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
                                 'Match Source': best_match.get('document_name', 'Unknown'),
-                                'Historical Comments': matched_comments[:100] + '...' if len(matched_comments) > 100 else matched_comments or 'No comments',
-                                'Historical Responses': matched_responses[:100] + '...' if len(matched_responses) > 100 else matched_responses or 'No responses',
+                                'Historical Comments': matched_comments or 'No comments',
+                                'Historical Responses': matched_responses or 'No responses',
                                 'Similarity Score': f"{best_score:.2f}",
                                 'Has Match': 'Yes - PostgreSQL',
                                 'Match Type': 'semantic'
@@ -751,7 +799,7 @@ if uploaded_file is not None:
                         "Deviations": st.column_config.TextColumn(
                             "Deviations / Response",
                             help="Master DB responses shown here. You can edit or add your own response for requirements without matches",
-                            max_chars=500,
+                            max_chars=1000,
                             width="large"
                         ),
                         "New Requirement": st.column_config.TextColumn(
@@ -760,15 +808,17 @@ if uploaded_file is not None:
                         ),
                         "Historical Comments": st.column_config.TextColumn(
                             "Historical Comments",
-                            width="medium"
+                            help="Comments from historical requirements - hover to see full text",
+                            width="large"
                         ),
                         "Historical Responses": st.column_config.TextColumn(
                             "Historical Responses",
-                            width="medium"
+                            help="Responses from historical requirements - hover to see full text",
+                            width="large"
                         ),
                         "Matched Requirement": st.column_config.TextColumn(
                             "Matched Requirement",
-                            width="medium"
+                            width="large"
                         )
                     },
                     disabled=['New Requirement', 'Category', 'Priority', 'Has Match', 
