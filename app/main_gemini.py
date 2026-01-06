@@ -238,6 +238,18 @@ if not GEMINI_PROCESSOR_AVAILABLE:
     st.error("❌ Gemini processor not available")
     st.stop()
 
+# Initialize deep semantic matcher (DISABLED - API quota issues)
+# try:
+#     from utils.deep_semantic_matcher import DeepSemanticMatcher
+#     deep_matcher = DeepSemanticMatcher(gemini_api_key)
+#     DEEP_MATCHING_AVAILABLE = True
+# except Exception as e:
+#     st.warning(f"⚠️ Deep semantic matching not available: {e}")
+#     deep_matcher = None
+#     DEEP_MATCHING_AVAILABLE = False
+deep_matcher = None
+DEEP_MATCHING_AVAILABLE = False
+
 # ---------------- Document Processing Section ----------------
 st.header("📄 Document Processing")
 
@@ -666,7 +678,7 @@ if uploaded_file is not None:
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.85  # High threshold for meaning-based matching, not just domain similarity
+                            threshold=0.75  # Initial filter - Gemini will do deep validation
                         )
                         
                         # Find the best match from a different document
@@ -682,8 +694,25 @@ if uploaded_file is not None:
                                     best_score = result.get('similarity_score', 0)
                         
                         if best_match and best_score >= 0.85:
-                            # Apply enhanced validation if available
-                            confidence = 'medium'  # Default
+                            # Use semantic score for matching
+                            final_score = best_score
+                            confidence = 'medium'
+                            reasoning = 'Vector-based semantic similarity'
+                            
+                            # Deep matching disabled due to API quota
+                            # if DEEP_MATCHING_AVAILABLE and deep_matcher:
+                            #     try:
+                            #         gemini_score, analysis = deep_matcher.compare_requirements(
+                            #             req_text,
+                            #             best_match['requirement']
+                            #         )
+                            #         final_score = gemini_score
+                            #         confidence = analysis.get('confidence', 'medium')
+                            #         reasoning = analysis.get('reasoning', 'No reasoning provided')
+                            #     except Exception as e:
+                            #         reasoning = f"Deep matching unavailable: {str(e)[:50]}"
+                            
+                            # Apply enhanced validation if available (advisory only)
                             keyword_overlap = 'N/A'
                             validation_details = {}
                             
@@ -696,17 +725,15 @@ if uploaded_file is not None:
                                         category_hint=req.get('category')
                                     )
                                     
-                                    # DON'T replace the score - just extract confidence info
-                                    confidence = match_details.get('confidence', 'medium')
+                                    # DON'T replace the score - just extract info
                                     keyword_overlap = str(match_details.get('keyword_details', {}).get('word_count', 'N/A'))
-                                    
-                                    # Keep the original semantic score - enhanced is just for info
                                     
                                 except Exception as e:
                                     # Fallback to basic matching on error
                                     pass
                             
-                            if best_match:
+                            # Only proceed if final score meets threshold
+                            if best_match and final_score >= 0.85:
                                 # Check if the matched requirement has comments
                                 matched_comments = ""
                                 matched_responses = ""
@@ -757,7 +784,8 @@ if uploaded_file is not None:
                                     'Match Source': best_match.get('document_name', 'Unknown'),
                                     'Historical Comments': matched_comments or 'No comments',
                                     'Historical Responses': matched_responses or 'No responses',
-                                    'Similarity Score': f"{best_score:.2f}",
+                                    'Similarity Score': f"{final_score:.2f}",
+                                    'Deep Analysis': reasoning if DEEP_MATCHING_AVAILABLE else 'N/A',
                                     'Has Match': 'Yes - PostgreSQL',
                                     'Match Type': 'semantic',
                                     'Confidence': confidence,
