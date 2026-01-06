@@ -666,7 +666,7 @@ if uploaded_file is not None:
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.75  # Higher threshold for better quality matches
+                            threshold=0.85  # High threshold for meaning-based matching, not just domain similarity
                         )
                         
                         # Find the best match from a different document
@@ -681,7 +681,7 @@ if uploaded_file is not None:
                                     best_match = result
                                     best_score = result.get('similarity_score', 0)
                         
-                        if best_match and best_score >= 0.75:
+                        if best_match and best_score >= 0.85:
                             # Apply enhanced validation if available
                             confidence = 'medium'  # Default
                             keyword_overlap = 'N/A'
