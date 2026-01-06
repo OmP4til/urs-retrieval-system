@@ -238,17 +238,15 @@ if not GEMINI_PROCESSOR_AVAILABLE:
     st.error("❌ Gemini processor not available")
     st.stop()
 
-# Initialize deep semantic matcher (DISABLED - API quota issues)
-# try:
-#     from utils.deep_semantic_matcher import DeepSemanticMatcher
-#     deep_matcher = DeepSemanticMatcher(gemini_api_key)
-#     DEEP_MATCHING_AVAILABLE = True
-# except Exception as e:
-#     st.warning(f"⚠️ Deep semantic matching not available: {e}")
-#     deep_matcher = None
-#     DEEP_MATCHING_AVAILABLE = False
-deep_matcher = None
-DEEP_MATCHING_AVAILABLE = False
+# Initialize deep semantic matcher
+try:
+    from utils.deep_semantic_matcher import DeepSemanticMatcher
+    deep_matcher = DeepSemanticMatcher(gemini_api_key)
+    DEEP_MATCHING_AVAILABLE = True
+except Exception as e:
+    st.warning(f"⚠️ Deep semantic matching not available: {e}")
+    deep_matcher = None
+    DEEP_MATCHING_AVAILABLE = False
 
 # ---------------- Document Processing Section ----------------
 st.header("📄 Document Processing")
@@ -694,23 +692,23 @@ if uploaded_file is not None:
                                     best_score = result.get('similarity_score', 0)
                         
                         if best_match and best_score >= 0.85:
-                            # Use semantic score for matching
+                            # Use semantic score initially
                             final_score = best_score
                             confidence = 'medium'
                             reasoning = 'Vector-based semantic similarity'
                             
-                            # Deep matching disabled due to API quota
-                            # if DEEP_MATCHING_AVAILABLE and deep_matcher:
-                            #     try:
-                            #         gemini_score, analysis = deep_matcher.compare_requirements(
-                            #             req_text,
-                            #             best_match['requirement']
-                            #         )
-                            #         final_score = gemini_score
-                            #         confidence = analysis.get('confidence', 'medium')
-                            #         reasoning = analysis.get('reasoning', 'No reasoning provided')
-                            #     except Exception as e:
-                            #         reasoning = f"Deep matching unavailable: {str(e)[:50]}"
+                            # Try deep matching with Gemini for better understanding
+                            if DEEP_MATCHING_AVAILABLE and deep_matcher:
+                                try:
+                                    gemini_score, analysis = deep_matcher.compare_requirements(
+                                        req_text,
+                                        best_match['requirement']
+                                    )
+                                    final_score = gemini_score
+                                    confidence = analysis.get('confidence', 'high')
+                                    reasoning = analysis.get('reasoning', 'No reasoning provided')
+                                except Exception as e:
+                                    reasoning = f"Deep matching error: {str(e)[:80]}"
                             
                             # Apply enhanced validation if available (advisory only)
                             keyword_overlap = 'N/A'
