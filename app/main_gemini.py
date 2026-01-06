@@ -665,7 +665,8 @@ if uploaded_file is not None:
                         # Use correct search method from PostgresVectorStoreGemini
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
-                            top_k=3  # Get top 3 matches
+                            top_k=3,  # Get top 3 matches
+                            threshold=0.75  # Higher threshold for better quality matches
                         )
                         
                         # Find the best match from a different document
@@ -680,7 +681,7 @@ if uploaded_file is not None:
                                     best_match = result
                                     best_score = result.get('similarity_score', 0)
                         
-                        if best_match and best_score >= 0.3:
+                        if best_match and best_score >= 0.75:
                             # Apply enhanced validation if available
                             confidence = 'medium'  # Default
                             keyword_overlap = 'N/A'
@@ -688,26 +689,19 @@ if uploaded_file is not None:
                             
                             if enhanced_matcher:
                                 try:
-                                    # Enhanced multi-layer validation
+                                    # Enhanced multi-layer validation - ADVISORY ONLY
                                     enhanced_score, match_details = enhanced_matcher.enhanced_match(
                                         req_text,
                                         best_match['requirement'],
                                         category_hint=req.get('category')
                                     )
                                     
-                                    # Use the more conservative score
-                                    if enhanced_score < best_score:
-                                        # Enhanced validation found issues
-                                        validation_details = match_details
-                                        best_score = enhanced_score
-                                    
+                                    # DON'T replace the score - just extract confidence info
                                     confidence = match_details.get('confidence', 'medium')
                                     keyword_overlap = str(match_details.get('keyword_details', {}).get('word_count', 'N/A'))
                                     
-                                    # If enhanced score drops below threshold, reject match
-                                    if enhanced_score < 0.3:
-                                        best_match = None
-                                        best_score = 0
+                                    # Keep the original semantic score - enhanced is just for info
+                                    
                                 except Exception as e:
                                     # Fallback to basic matching on error
                                     pass
