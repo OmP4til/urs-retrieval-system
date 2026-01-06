@@ -717,7 +717,7 @@ if uploaded_file is not None:
                                 'Similarity Score': f"{best_score:.2f}",
                                 'Has Match': 'Yes - PostgreSQL',
                                 'Match Type': 'semantic'
-                            })
+                            })  
                         else:
                             # No match found in either database
                             matching_data.append({
@@ -745,113 +745,177 @@ if uploaded_file is not None:
                             'Has Match': 'Error'
                         })
             
-            # Display the matching table
+            # Display the matching table - Split into 3 tables
             if matching_data:
                 import pandas as pd
                 
+                # Separate data into three categories
+                deviation_list_data = [x for x in matching_data if x.get('Has Match', '').startswith('Yes - Master DB')]
+                historical_matches_data = [x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) >= 0.7]
+                no_match_data = [x for x in matching_data if x.get('Has Match', '') == 'No' or (x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) < 0.7)]
+                
                 # Create enhanced summary statistics
                 total_requirements = len(matching_data)
-                master_db_matched = len([x for x in matching_data if x.get('Has Match', '').startswith('Yes - Master DB')])
-                postgres_matched = len([x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL'])
-                no_match_requirements = len([x for x in matching_data if x.get('Has Match', '') == 'No'])
                 
                 # Display summary
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("📝 Total New Requirements", total_requirements)
                 with col2:
-                    st.metric("📋 Master DB Matches", master_db_matched, help="Matched from Excel Master Database")
+                    st.metric("📋 Deviation List Matches", len(deviation_list_data), help="Matched from Excel Master Database")
                 with col3:
-                    st.metric("🗄️ PostgreSQL Matches", postgres_matched, help="Matched from Historical PostgreSQL Database")
+                    st.metric("🗄️ Historical Matches (≥70%)", len(historical_matches_data), help="PostgreSQL matches with similarity ≥ 0.7")
                 with col4:
-                    st.metric("❌ No Matches", no_match_requirements, help="No historical match found")
+                    st.metric("❌ No Match / Low Similarity", len(no_match_data), help="No match or similarity < 0.7")
                 
                 st.subheader("📊 Multi-Layer Requirement Matching Results")
-                st.caption("✅ Master Database checked first, then Historical PostgreSQL database | 📝 You can edit the 'Deviations' column to add your own responses")
+                st.caption("✅ Results split into 3 tables: Deviation List (Master DB), Historical Matches (≥70%), and No Match/Low Similarity (<70%)")
                 
-                # Create and display the table with editable Deviations column
-                display_df = pd.DataFrame(matching_data)
-                
-                # Add Deviations column - populate with Master DB responses or empty for user input
-                display_df['Deviations'] = display_df.apply(
-                    lambda row: row.get('Historical Responses', '') if row.get('Has Match', '').startswith('Yes - Master DB') else '',
-                    axis=1
-                )
-                
-                # Reorder columns for better display
-                column_order = [
-                    'New Requirement', 'Category', 'Priority',
-                    'Deviations',  # Editable column - prominently placed
-                    'Has Match', 'Match Source', 'Match Type', 'Similarity Score',
-                    'Matched Requirement', 'Historical Comments', 'Historical Responses'
-                ]
-                
-                # Only include columns that exist
-                column_order = [col for col in column_order if col in display_df.columns]
-                display_df = display_df[column_order]
-                
-                # Use data_editor for editable table
-                edited_df = st.data_editor(
-                    display_df,
-                    width='stretch',
-                    hide_index=True,
-                    column_config={
-                        "Deviations": st.column_config.TextColumn(
-                            "Deviations / Response",
-                            help="Master DB responses shown here. You can edit or add your own response for requirements without matches",
-                            max_chars=1000,
-                            width="large"
-                        ),
-                        "New Requirement": st.column_config.TextColumn(
-                            "New Requirement",
-                            width="large"
-                        ),
-                        "Historical Comments": st.column_config.TextColumn(
-                            "Historical Comments",
-                            help="Comments from historical requirements - hover to see full text",
-                            width="large"
-                        ),
-                        "Historical Responses": st.column_config.TextColumn(
-                            "Historical Responses",
-                            help="Responses from historical requirements - hover to see full text",
-                            width="large"
-                        ),
-                        "Matched Requirement": st.column_config.TextColumn(
-                            "Matched Requirement",
-                            width="large"
-                        )
-                    },
-                    disabled=['New Requirement', 'Category', 'Priority', 'Has Match', 
-                             'Match Source', 'Match Type', 'Similarity Score', 
-                             'Matched Requirement', 'Historical Comments', 'Historical Responses']  # Only Deviations is editable
-                )
-                
-                # Add export functionality for edited data
-                st.divider()
-                col_export1, col_export2 = st.columns([3, 1])
-                
-                with col_export2:
-                    # Check if user made any edits to Deviations column
-                    user_added_deviations = edited_df[edited_df['Deviations'] != display_df['Deviations']]
+                # === TABLE 1: Deviation List (Master Database Matches) ===
+                if deviation_list_data:
+                    st.markdown("---")
+                    st.subheader("📋 Table 1: Deviation List (Master Database Matches)")
+                    st.caption(f"✅ {len(deviation_list_data)} requirements matched from Excel Master Database")
                     
-                    if not user_added_deviations.empty:
-                        st.success(f"✅ {len(user_added_deviations)} deviations edited/added")
+                    deviation_df = pd.DataFrame(deviation_list_data)
+                    deviation_df['Deviations'] = deviation_df['Historical Responses']
                     
-                    # Export to CSV
-                    csv_data = edited_df.to_csv(index=False).encode('utf-8')
+                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
+                                  'Similarity Score', 'Matched Requirement', 'Match Source']
+                    column_order = [col for col in column_order if col in deviation_df.columns]
+                    deviation_df = deviation_df[column_order]
+                    
+                    edited_deviation_df = st.data_editor(
+                        deviation_df,
+                        width='stretch',
+                        hide_index=True,
+                        column_config={
+                            "Deviations": st.column_config.TextColumn("Deviations / Response", max_chars=1000, width="large"),
+                            "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
+                            "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="large")
+                        },
+                        disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
+                                'Matched Requirement', 'Match Source'],
+                        key="deviation_table"
+                    )
+                    
+                    # Export button for Deviation List
+                    csv_deviation = edited_deviation_df.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label="📥 Download Results as CSV",
-                        data=csv_data,
-                        file_name=f"requirement_matching_{filename.replace('.docx', '')}.csv",
+                        label="📥 Download Deviation List as CSV",
+                        data=csv_deviation,
+                        file_name=f"deviation_list_{filename.replace('.docx', '')}.csv",
                         mime="text/csv",
-                        help="Download the matching results with your deviations"
+                        key="download_deviation"
+                    )
+                else:
+                    st.info("ℹ️ No matches found in Master Database")
+                
+                # === TABLE 2: Historical Matches (PostgreSQL ≥70%) ===
+                if historical_matches_data:
+                    st.markdown("---")
+                    st.subheader("🗄️ Table 2: Historical Matches (Similarity ≥ 70%)")
+                    st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
+                    
+                    historical_df = pd.DataFrame(historical_matches_data)
+                    historical_df['Deviations'] = ''  # Empty for user input
+                    
+                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
+                                  'Similarity Score', 'Matched Requirement', 'Match Source', 
+                                  'Historical Comments', 'Historical Responses']
+                    column_order = [col for col in column_order if col in historical_df.columns]
+                    historical_df = historical_df[column_order]
+                    
+                    edited_historical_df = st.data_editor(
+                        historical_df,
+                        width='stretch',
+                        hide_index=True,
+                        column_config={
+                            "Deviations": st.column_config.TextColumn("Deviations / Response", max_chars=1000, width="large"),
+                            "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
+                            "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="large"),
+                            "Historical Comments": st.column_config.TextColumn("Historical Comments", width="large"),
+                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large")
+                        },
+                        disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
+                                'Matched Requirement', 'Match Source', 'Historical Comments', 'Historical Responses'],
+                        key="historical_table"
+                    )
+                    
+                    # Export button for Historical Matches
+                    csv_historical = edited_historical_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Historical Matches as CSV",
+                        data=csv_historical,
+                        file_name=f"historical_matches_{filename.replace('.docx', '')}.csv",
+                        mime="text/csv",
+                        key="download_historical"
+                    )
+                else:
+                    st.info("ℹ️ No high-similarity matches found in PostgreSQL")
+                
+                # === TABLE 3: No Match / Low Similarity (<70%) ===
+                if no_match_data:
+                    st.markdown("---")
+                    st.subheader("❌ Table 3: No Match / Low Similarity (< 70%)")
+                    st.caption(f"⚠️ {len(no_match_data)} requirements with no match or low similarity - Manual review needed")
+                    
+                    no_match_df = pd.DataFrame(no_match_data)
+                    no_match_df['Deviations'] = ''  # Empty for user input
+                    
+                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
+                                  'Similarity Score', 'Matched Requirement', 'Match Source']
+                    column_order = [col for col in column_order if col in no_match_df.columns]
+                    no_match_df = no_match_df[column_order]
+                    
+                    edited_no_match_df = st.data_editor(
+                        no_match_df,
+                        width='stretch',
+                        hide_index=True,
+                        column_config={
+                            "Deviations": st.column_config.TextColumn("Deviations / Response (Manual Input Required)", 
+                                                                     max_chars=1000, width="large"),
+                            "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
+                            "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="medium")
+                        },
+                        disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
+                                'Matched Requirement', 'Match Source'],
+                        key="no_match_table"
+                    )
+                    
+                    # Export button for No Match
+                    csv_no_match = edited_no_match_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download No Match List as CSV",
+                        data=csv_no_match,
+                        file_name=f"no_match_list_{filename.replace('.docx', '')}.csv",
+                        mime="text/csv",
+                        key="download_no_match"
+                    )
+                else:
+                    st.success("✅ All requirements have high-confidence matches!")
+                
+                # Export all combined
+                st.markdown("---")
+                st.subheader("📦 Export All Results")
+                
+                # Combine all for full export
+                all_data = deviation_list_data + historical_matches_data + no_match_data
+                all_df = pd.DataFrame(all_data)
+                if 'Deviations' not in all_df.columns:
+                    all_df['Deviations'] = all_df.apply(
+                        lambda row: row.get('Historical Responses', '') if row.get('Has Match', '').startswith('Yes - Master DB') else '',
+                        axis=1
                     )
                 
-                with col_export1:
-                    if not user_added_deviations.empty:
-                        st.info("💡 **Tip:** Your edits are ready to export. Click the download button to save your work.")
-                    else:
-                        st.info("💡 **Tip:** Edit the 'Deviations' column to add responses for requirements without matches, then download.")
+                csv_all = all_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download All Results as CSV",
+                    data=csv_all,
+                    file_name=f"all_matching_results_{filename.replace('.docx', '')}.csv",
+                    mime="text/csv",
+                    help="Download all three tables combined"
+                )
             
             st.success("🎯 Multi-layer historical matching analysis complete!")
         
