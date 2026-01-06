@@ -676,7 +676,7 @@ if uploaded_file is not None:
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.75  # Initial filter - Gemini will do deep validation
+                            threshold=0.70  # Lower initial filter - Gemini will validate meaning
                         )
                         
                         # Find the best match from a different document
@@ -691,7 +691,7 @@ if uploaded_file is not None:
                                     best_match = result
                                     best_score = result.get('similarity_score', 0)
                         
-                        if best_match and best_score >= 0.85:
+                        if best_match and best_score >= 0.75:
                             # Use semantic score initially
                             final_score = best_score
                             confidence = 'medium'
@@ -730,8 +730,8 @@ if uploaded_file is not None:
                                     # Fallback to basic matching on error
                                     pass
                             
-                            # Only proceed if final score meets threshold
-                            if best_match and final_score >= 0.85:
+                            # Only proceed if final score meets threshold (Gemini-validated)
+                            if best_match and final_score >= 0.80:
                                 # Check if the matched requirement has comments
                                 matched_comments = ""
                                 matched_responses = ""
