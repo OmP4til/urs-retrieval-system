@@ -32,6 +32,14 @@ except ImportError:
     MASTER_DB_AVAILABLE = False
     st.warning("⚠️ Master Database module not available. Will skip master database check.")
 
+# Import Enhanced Matching (optional, for validation)
+try:
+    from utils.enhanced_matching import EnhancedSemanticMatcher
+    ENHANCED_MATCHING_AVAILABLE = True
+except ImportError:
+    ENHANCED_MATCHING_AVAILABLE = False
+    # Silently fallback to basic matching
+
 # Load environment variables
 load_dotenv()
 
@@ -177,6 +185,14 @@ def init_master_database():
 
 vectorstore = init_vectorstore()
 master_db = init_master_database()
+
+# Initialize enhanced matcher (optional)
+enhanced_matcher = None
+if ENHANCED_MATCHING_AVAILABLE:
+    try:
+        enhanced_matcher = EnhancedSemanticMatcher()
+    except Exception as e:
+        st.warning(f"⚠️ Enhanced matching unavailable: {e}")
 
 # Display database status
 with st.sidebar:
@@ -665,59 +681,94 @@ if uploaded_file is not None:
                                     best_score = result.get('similarity_score', 0)
                         
                         if best_match and best_score >= 0.3:
-                            # Check if the matched requirement has comments
-                            matched_comments = ""
-                            matched_responses = ""
+                            # Apply enhanced validation if available
+                            confidence = 'medium'  # Default
+                            keyword_overlap = 'N/A'
+                            validation_details = {}
                             
-                            # Get the full requirement data to check for comments
-                            full_matched_req = None
-                            for hist_req in historical_requirements:
-                                if hist_req['requirement'] == best_match['requirement']:
-                                    full_matched_req = hist_req
-                                    break
+                            if enhanced_matcher:
+                                try:
+                                    # Enhanced multi-layer validation
+                                    enhanced_score, match_details = enhanced_matcher.enhanced_match(
+                                        req_text,
+                                        best_match['requirement'],
+                                        category_hint=req.get('category')
+                                    )
+                                    
+                                    # Use the more conservative score
+                                    if enhanced_score < best_score:
+                                        # Enhanced validation found issues
+                                        validation_details = match_details
+                                        best_score = enhanced_score
+                                    
+                                    confidence = match_details.get('confidence', 'medium')
+                                    keyword_overlap = str(match_details.get('keyword_details', {}).get('word_count', 'N/A'))
+                                    
+                                    # If enhanced score drops below threshold, reject match
+                                    if enhanced_score < 0.3:
+                                        best_match = None
+                                        best_score = 0
+                                except Exception as e:
+                                    # Fallback to basic matching on error
+                                    pass
                             
-                            if full_matched_req:
-                                comments_data = full_matched_req.get('comments')
-                                if comments_data:
-                                    try:
-                                        # Parse comments properly using the extract_clean_comments function
-                                        clean_comments = extract_clean_comments(comments_data)
-                                        
-                                        if clean_comments:
-                                            # Format comments nicely with full text (not truncated)
-                                            comment_texts = []
-                                            for comment in clean_comments[:3]:  # Show up to 3 comments
-                                                text = comment.get('text', '')
-                                                author = comment.get('author', 'Unknown')
-                                                if text:
-                                                    # Show full comment text, not truncated
-                                                    comment_texts.append(f"[{author}] {text}")
+                            if best_match:
+                                # Check if the matched requirement has comments
+                                matched_comments = ""
+                                matched_responses = ""
+                                
+                                # Get the full requirement data to check for comments
+                                full_matched_req = None
+                                for hist_req in historical_requirements:
+                                    if hist_req['requirement'] == best_match['requirement']:
+                                        full_matched_req = hist_req
+                                        break
+                                
+                                if full_matched_req:
+                                    comments_data = full_matched_req.get('comments')
+                                    if comments_data:
+                                        try:
+                                            # Parse comments properly using the extract_clean_comments function
+                                            clean_comments = extract_clean_comments(comments_data)
                                             
-                                            matched_comments = " | ".join(comment_texts)
-                                            matched_responses = matched_comments  # Use same data for responses
-                                            
-                                            if len(clean_comments) > 3:
-                                                matched_comments += f" ... (+{len(clean_comments) - 3} more)"
-                                                matched_responses = matched_comments
-                                        else:
-                                            matched_comments = "No comments"
-                                            matched_responses = "No responses"
-                                    except Exception as e:
-                                        matched_comments = f"Error parsing: {str(e)[:50]}"
-                                        matched_responses = matched_comments
-                            
-                            matching_data.append({
-                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
-                                'Category': req.get('category', 'Unknown'),
-                                'Priority': req.get('priority', 'Unknown'),
-                                'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
-                                'Match Source': best_match.get('document_name', 'Unknown'),
-                                'Historical Comments': matched_comments or 'No comments',
-                                'Historical Responses': matched_responses or 'No responses',
-                                'Similarity Score': f"{best_score:.2f}",
-                                'Has Match': 'Yes - PostgreSQL',
-                                'Match Type': 'semantic'
-                            })  
+                                            if clean_comments:
+                                                # Format comments nicely with full text (not truncated)
+                                                comment_texts = []
+                                                for comment in clean_comments[:3]:  # Show up to 3 comments
+                                                    text = comment.get('text', '')
+                                                    author = comment.get('author', 'Unknown')
+                                                    if text:
+                                                        # Show full comment text, not truncated
+                                                        comment_texts.append(f"[{author}] {text}")
+                                                
+                                                matched_comments = " | ".join(comment_texts)
+                                                matched_responses = matched_comments  # Use same data for responses
+                                                
+                                                if len(clean_comments) > 3:
+                                                    matched_comments += f" ... (+{len(clean_comments) - 3} more)"
+                                                    matched_responses = matched_comments
+                                            else:
+                                                matched_comments = "No comments"
+                                                matched_responses = "No responses"
+                                        except Exception as e:
+                                            matched_comments = f"Error parsing: {str(e)[:50]}"
+                                            matched_responses = matched_comments
+                                
+                                # Add enhanced match data
+                                matching_data.append({
+                                    'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                    'Category': req.get('category', 'Unknown'),
+                                    'Priority': req.get('priority', 'Unknown'),
+                                    'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
+                                    'Match Source': best_match.get('document_name', 'Unknown'),
+                                    'Historical Comments': matched_comments or 'No comments',
+                                    'Historical Responses': matched_responses or 'No responses',
+                                    'Similarity Score': f"{best_score:.2f}",
+                                    'Has Match': 'Yes - PostgreSQL',
+                                    'Match Type': 'semantic',
+                                    'Confidence': confidence,
+                                    'Keyword Overlap': keyword_overlap
+                                })  
                         else:
                             # No match found in either database
                             matching_data.append({
@@ -815,13 +866,22 @@ if uploaded_file is not None:
                 if historical_matches_data:
                     st.markdown("---")
                     st.subheader("🗄️ Table 2: Historical Matches (Similarity ≥ 70%)")
-                    st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
+                    
+                    # Add confidence breakdown if enhanced matching is enabled
+                    if enhanced_matcher:
+                        high_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'high'])
+                        med_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'medium'])
+                        low_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'low'])
+                        st.caption(f"✅ {len(historical_matches_data)} requirements | 🟢 {high_conf} High | 🟡 {med_conf} Medium | 🔴 {low_conf} Low confidence")
+                    else:
+                        st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
                     
                     historical_df = pd.DataFrame(historical_matches_data)
                     historical_df['Deviations'] = ''  # Empty for user input
                     
                     column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
-                                  'Similarity Score', 'Matched Requirement', 'Match Source', 
+                                  'Similarity Score', 'Confidence', 'Keyword Overlap',
+                                  'Matched Requirement', 'Match Source', 
                                   'Historical Comments', 'Historical Responses']
                     column_order = [col for col in column_order if col in historical_df.columns]
                     historical_df = historical_df[column_order]
@@ -835,9 +895,12 @@ if uploaded_file is not None:
                             "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
                             "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="large"),
                             "Historical Comments": st.column_config.TextColumn("Historical Comments", width="large"),
-                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large")
+                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large"),
+                            "Confidence": st.column_config.TextColumn("Match Quality", width="small", help="🟢 high | 🟡 medium | 🔴 low"),
+                            "Keyword Overlap": st.column_config.TextColumn("Keywords", width="small", help="Number of common keywords")
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
+                                'Confidence', 'Keyword Overlap',
                                 'Matched Requirement', 'Match Source', 'Historical Comments', 'Historical Responses'],
                         key="historical_table"
                     )
