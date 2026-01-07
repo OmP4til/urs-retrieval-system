@@ -738,20 +738,29 @@ Return JSON format:
                         best_similarity = 0.0
                         
                         for docx_text, docx_comments in structured_comments.items():
-                            # Calculate similarity between requirement and DOCX text that has comments
-                            if semantic_matcher:
-                                similarity = semantic_matcher.calculate_semantic_similarity(req_text, docx_text)
-                            else:
-                                # Fallback to simple word overlap
-                                req_words = set(req_text.lower().split())
-                                docx_words = set(docx_text.lower().split())
-                                common = len(req_words & docx_words)
-                                similarity = common / max(len(req_words), len(docx_words), 1)
+                            # STRATEGY 1: Try exact substring match first (most accurate)
+                            # Check if DOCX commented text is a substring of requirement
+                            docx_lower = docx_text.lower().strip()
+                            req_lower = req_text.lower().strip()
                             
-                            # If this is a strong match and better than previous matches
-                            # Use threshold 0.5 for DOCX comment mapping (moderate)
-                            # Semantic validation prevents false matches from word overlap
-                            if similarity > best_similarity and similarity > 0.5:
+                            if docx_lower in req_lower or req_lower in docx_lower:
+                                # Exact or substring match - use maximum similarity
+                                similarity = 1.0
+                            else:
+                                # STRATEGY 2: Use semantic similarity for non-exact matches
+                                if semantic_matcher:
+                                    similarity = semantic_matcher.calculate_semantic_similarity(req_text, docx_text)
+                                else:
+                                    # Fallback to word overlap
+                                    req_words = set(req_lower.split())
+                                    docx_words = set(docx_lower.split())
+                                    common = len(req_words & docx_words)
+                                    total = len(req_words | docx_words)
+                                    similarity = common / max(total, 1)
+                            
+                            # Use threshold 0.75 for semantic matches (high precision)
+                            # Exact/substring matches automatically pass with similarity=1.0
+                            if similarity > best_similarity and similarity > 0.75:
                                 best_similarity = similarity
                                 best_match = (docx_text, docx_comments, similarity)
                         
