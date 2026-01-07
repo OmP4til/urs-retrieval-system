@@ -128,10 +128,10 @@ class IntelligentTextMatcher:
     Can match concepts even when different words are used.
     """
     
-    def __init__(self, model_name="all-mpnet-base-v2"):
+    def __init__(self, model_name="intfloat/e5-large-v2"):
         """Initialize the semantic matcher with a pre-trained model.
         
-        Uses all-mpnet-base-v2 by default - a more powerful semantic model that:
+        Uses intfloat/e5-large-v2 by default - a more powerful semantic model that:
         - Better understands meaning vs word overlap
         - Can distinguish between similar words with different meanings
         - Provides more accurate semantic similarity scores

@@ -26,10 +26,10 @@ class PostgresVectorStoreGemini:
             'password': os.getenv('POSTGRES_PASSWORD', 'Patil1234')
         }
         
-        # Initialize embedding model - upgraded to all-mpnet-base-v2 for better semantic understanding
-        # This model better understands meaning vs word overlap
-        self.model = SentenceTransformer('all-mpnet-base-v2')
-        print("PostgreSQL vectorstore initialized with all-mpnet-base-v2 for meaning-based matching")
+        # Initialize embedding model - using intfloat/e5-large-v2 for superior semantic understanding
+        # This model provides state-of-the-art semantic embeddings with 1024 dimensions
+        self.model = SentenceTransformer('intfloat/e5-large-v2')
+        print("PostgreSQL vectorstore initialized with intfloat/e5-large-v2 for meaning-based matching")
         
         # Test connection
         self._test_connection()
@@ -64,8 +64,8 @@ class PostgresVectorStoreGemini:
             cur = conn.cursor()
             
             for req in requirements:
-                # Generate embedding
-                embedding = self.model.encode(req)
+                # Generate embedding with E5 passage prefix for document storage
+                embedding = self.model.encode("passage: " + req)
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata
@@ -139,8 +139,8 @@ class PostgresVectorStoreGemini:
                     print(f"ÔÜá´©Å Skipping pair with no text: {pair}")
                     continue
                 
-                # Generate embedding
-                embedding = self.model.encode(req_text)
+                # Generate embedding with E5 passage prefix for document storage
+                embedding = self.model.encode("passage: " + req_text)
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata with requirement details
@@ -235,8 +235,8 @@ class PostgresVectorStoreGemini:
                 conn.close()
                 return []
             
-            # Generate query embedding
-            query_embedding = self.model.encode([query])[0]
+            # Generate query embedding with E5 query prefix for search
+            query_embedding = self.model.encode(["query: " + query])[0]
             embedding_str = '[' + ','.join(map(str, query_embedding.tolist())) + ']'
             
             # Use pgvector's <=> operator for cosine distance

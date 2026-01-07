@@ -14,7 +14,7 @@ class EnhancedSemanticMatcher:
     """
     
     def __init__(self):
-        self.model = SentenceTransformer('all-mpnet-base-v2')
+        self.model = SentenceTransformer('intfloat/e5-large-v2')
         self.domain_keywords = self._load_domain_keywords()
         self.technical_patterns = self._load_technical_patterns()
         

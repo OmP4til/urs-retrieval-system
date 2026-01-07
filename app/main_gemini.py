@@ -32,14 +32,6 @@ except ImportError:
     MASTER_DB_AVAILABLE = False
     st.warning("⚠️ Master Database module not available. Will skip master database check.")
 
-# Import Enhanced Matching (optional, for validation)
-try:
-    from utils.enhanced_matching import EnhancedSemanticMatcher
-    ENHANCED_MATCHING_AVAILABLE = True
-except ImportError:
-    ENHANCED_MATCHING_AVAILABLE = False
-    # Silently fallback to basic matching
-
 # Load environment variables
 load_dotenv()
 
@@ -186,14 +178,6 @@ def init_master_database():
 vectorstore = init_vectorstore()
 master_db = init_master_database()
 
-# Initialize enhanced matcher (optional)
-enhanced_matcher = None
-if ENHANCED_MATCHING_AVAILABLE:
-    try:
-        enhanced_matcher = EnhancedSemanticMatcher()
-    except Exception as e:
-        st.warning(f"⚠️ Enhanced matching unavailable: {e}")
-
 # Display database status
 with st.sidebar:
     st.header("📊 Database Status")
@@ -237,16 +221,6 @@ if not gemini_api_key:
 if not GEMINI_PROCESSOR_AVAILABLE:
     st.error("❌ Gemini processor not available")
     st.stop()
-
-# Initialize deep semantic matcher
-try:
-    from utils.deep_semantic_matcher import DeepSemanticMatcher
-    deep_matcher = DeepSemanticMatcher(gemini_api_key)
-    DEEP_MATCHING_AVAILABLE = True
-except Exception as e:
-    st.warning(f"⚠️ Deep semantic matching not available: {e}")
-    deep_matcher = None
-    DEEP_MATCHING_AVAILABLE = False
 
 # ---------------- Document Processing Section ----------------
 st.header("📄 Document Processing")
@@ -654,8 +628,10 @@ if uploaded_file is not None:
                         req_text = req['text']
                         
                         # Check if we have a Master DB match first (priority)
+                        master_match_found = False
                         if req_text in master_db_matches:
                             master_match = master_db_matches[req_text]
+                            master_match_found = True
                             
                             matching_data.append({
                                 'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
@@ -669,126 +645,98 @@ if uploaded_file is not None:
                                 'Has Match': 'Yes - Master DB',
                                 'Match Type': master_match['match_type']
                             })
-                            continue  # Skip PostgreSQL search if Master DB match found
                         
-                        # If no Master DB match, search PostgreSQL historical database
+                        # ALWAYS search PostgreSQL historical database (even if Master DB match found)
                         # Use correct search method from PostgresVectorStoreGemini
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.70  # Lower initial filter - Gemini will validate meaning
+                            threshold=0.3  # Use 0.3 threshold for cross-document matching
                         )
+                        
+                        # DEBUG: Log search results
+                        if search_results:
+                            print(f"\n🔍 PostgreSQL search for: {req_text[:60]}...")
+                            print(f"   Found {len(search_results)} results")
+                            for i, res in enumerate(search_results, 1):
+                                print(f"   {i}. Score: {res.get('similarity_score', 0):.3f}, Doc: {res.get('document_name', 'Unknown')}, Match: {res.get('requirement', '')[:50]}...")
                         
                         # Find the best match from a different document
                         best_match = None
                         best_score = 0
                         
                         if search_results:
+                            print(f"   Current document name: '{filename}'")
                             for result in search_results:
                                 # Check if this is from a different document
                                 result_filename = result.get('document_name', '')
-                                if result_filename != filename and result.get('similarity_score', 0) > best_score:
+                                score = result.get('similarity_score', 0)
+                                print(f"   Comparing: '{result_filename}' != '{filename}' ? {result_filename != filename}, Score: {score:.3f}")
+                                if result_filename != filename and score > best_score:
                                     best_match = result
-                                    best_score = result.get('similarity_score', 0)
+                                    best_score = score
+                            
+                            if best_match:
+                                print(f"   ✅ Best match: {best_score:.3f} from '{best_match.get('document_name', '')}'")
+                            else:
+                                print(f"   ⚠️ No matches from different documents (all matches are from same document)")
+                        else:
+                            print(f"   ❌ No search results returned from PostgreSQL")
                         
-                        if best_match and best_score >= 0.75:
-                            # Use semantic score initially
-                            final_score = best_score
-                            confidence = 'medium'
-                            reasoning = 'Vector-based semantic similarity'
+                        if best_match and best_score >= 0.3:
+                            # Check if the matched requirement has comments
+                            matched_comments = ""
+                            matched_responses = ""
                             
-                            # Try deep matching with Gemini for better understanding
-                            if DEEP_MATCHING_AVAILABLE and deep_matcher:
-                                try:
-                                    gemini_score, analysis = deep_matcher.compare_requirements(
-                                        req_text,
-                                        best_match['requirement']
-                                    )
-                                    final_score = gemini_score
-                                    confidence = analysis.get('confidence', 'high')
-                                    reasoning = analysis.get('reasoning', 'No reasoning provided')
-                                except Exception as e:
-                                    reasoning = f"Deep matching error: {str(e)[:80]}"
+                            # Get the full requirement data to check for comments
+                            full_matched_req = None
+                            for hist_req in historical_requirements:
+                                if hist_req['requirement'] == best_match['requirement']:
+                                    full_matched_req = hist_req
+                                    break
                             
-                            # Apply enhanced validation if available (advisory only)
-                            keyword_overlap = 'N/A'
-                            validation_details = {}
-                            
-                            if enhanced_matcher:
-                                try:
-                                    # Enhanced multi-layer validation - ADVISORY ONLY
-                                    enhanced_score, match_details = enhanced_matcher.enhanced_match(
-                                        req_text,
-                                        best_match['requirement'],
-                                        category_hint=req.get('category')
-                                    )
-                                    
-                                    # DON'T replace the score - just extract info
-                                    keyword_overlap = str(match_details.get('keyword_details', {}).get('word_count', 'N/A'))
-                                    
-                                except Exception as e:
-                                    # Fallback to basic matching on error
-                                    pass
-                            
-                            # Only proceed if final score meets threshold (Gemini-validated)
-                            if best_match and final_score >= 0.80:
-                                # Check if the matched requirement has comments
-                                matched_comments = ""
-                                matched_responses = ""
-                                
-                                # Get the full requirement data to check for comments
-                                full_matched_req = None
-                                for hist_req in historical_requirements:
-                                    if hist_req['requirement'] == best_match['requirement']:
-                                        full_matched_req = hist_req
-                                        break
-                                
-                                if full_matched_req:
-                                    comments_data = full_matched_req.get('comments')
-                                    if comments_data:
-                                        try:
-                                            # Parse comments properly using the extract_clean_comments function
-                                            clean_comments = extract_clean_comments(comments_data)
+                            if full_matched_req:
+                                comments_data = full_matched_req.get('comments')
+                                if comments_data:
+                                    try:
+                                        # Parse comments properly using the extract_clean_comments function
+                                        clean_comments = extract_clean_comments(comments_data)
+                                        
+                                        if clean_comments:
+                                            # Format comments nicely with full text (not truncated)
+                                            comment_texts = []
+                                            for comment in clean_comments[:3]:  # Show up to 3 comments
+                                                text = comment.get('text', '')
+                                                author = comment.get('author', 'Unknown')
+                                                if text:
+                                                    # Show full comment text, not truncated
+                                                    comment_texts.append(f"[{author}] {text}")
                                             
-                                            if clean_comments:
-                                                # Format comments nicely with full text (not truncated)
-                                                comment_texts = []
-                                                for comment in clean_comments[:3]:  # Show up to 3 comments
-                                                    text = comment.get('text', '')
-                                                    author = comment.get('author', 'Unknown')
-                                                    if text:
-                                                        # Show full comment text, not truncated
-                                                        comment_texts.append(f"[{author}] {text}")
-                                                
-                                                matched_comments = " | ".join(comment_texts)
-                                                matched_responses = matched_comments  # Use same data for responses
-                                                
-                                                if len(clean_comments) > 3:
-                                                    matched_comments += f" ... (+{len(clean_comments) - 3} more)"
-                                                    matched_responses = matched_comments
-                                            else:
-                                                matched_comments = "No comments"
-                                                matched_responses = "No responses"
-                                        except Exception as e:
-                                            matched_comments = f"Error parsing: {str(e)[:50]}"
-                                            matched_responses = matched_comments
-                                
-                                # Add enhanced match data
-                                matching_data.append({
-                                    'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
-                                    'Category': req.get('category', 'Unknown'),
-                                    'Priority': req.get('priority', 'Unknown'),
-                                    'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
-                                    'Match Source': best_match.get('document_name', 'Unknown'),
-                                    'Historical Comments': matched_comments or 'No comments',
-                                    'Historical Responses': matched_responses or 'No responses',
-                                    'Similarity Score': f"{final_score:.2f}",
-                                    'Deep Analysis': reasoning if DEEP_MATCHING_AVAILABLE else 'N/A',
-                                    'Has Match': 'Yes - PostgreSQL',
-                                    'Match Type': 'semantic',
-                                    'Confidence': confidence,
-                                    'Keyword Overlap': keyword_overlap
-                                })  
+                                            matched_comments = " | ".join(comment_texts)
+                                            matched_responses = matched_comments  # Use same data for responses
+                                            
+                                            if len(clean_comments) > 3:
+                                                matched_comments += f" ... (+{len(clean_comments) - 3} more)"
+                                                matched_responses = matched_comments
+                                        else:
+                                            matched_comments = "No comments"
+                                            matched_responses = "No responses"
+                                    except Exception as e:
+                                        matched_comments = f"Error parsing: {str(e)[:50]}"
+                                        matched_responses = matched_comments
+                            
+                            matching_data.append({
+                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                'Category': req.get('category', 'Unknown'),
+                                'Priority': req.get('priority', 'Unknown'),
+                                'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
+                                'Match Source': best_match.get('document_name', 'Unknown'),
+                                'Historical Comments': matched_comments or 'No comments',
+                                'Historical Responses': matched_responses or 'No responses',
+                                'Similarity Score': f"{best_score:.2f}",
+                                'Has Match': 'Yes - PostgreSQL',
+                                'Match Type': 'semantic'
+                            })  
                         else:
                             # No match found in either database
                             matching_data.append({
@@ -886,22 +834,13 @@ if uploaded_file is not None:
                 if historical_matches_data:
                     st.markdown("---")
                     st.subheader("🗄️ Table 2: Historical Matches (Similarity ≥ 70%)")
-                    
-                    # Add confidence breakdown if enhanced matching is enabled
-                    if enhanced_matcher:
-                        high_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'high'])
-                        med_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'medium'])
-                        low_conf = len([x for x in historical_matches_data if x.get('Confidence') == 'low'])
-                        st.caption(f"✅ {len(historical_matches_data)} requirements | 🟢 {high_conf} High | 🟡 {med_conf} Medium | 🔴 {low_conf} Low confidence")
-                    else:
-                        st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
+                    st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
                     
                     historical_df = pd.DataFrame(historical_matches_data)
                     historical_df['Deviations'] = ''  # Empty for user input
                     
                     column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
-                                  'Similarity Score', 'Confidence', 'Keyword Overlap',
-                                  'Matched Requirement', 'Match Source', 
+                                  'Similarity Score', 'Matched Requirement', 'Match Source', 
                                   'Historical Comments', 'Historical Responses']
                     column_order = [col for col in column_order if col in historical_df.columns]
                     historical_df = historical_df[column_order]
@@ -915,12 +854,9 @@ if uploaded_file is not None:
                             "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
                             "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="large"),
                             "Historical Comments": st.column_config.TextColumn("Historical Comments", width="large"),
-                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large"),
-                            "Confidence": st.column_config.TextColumn("Match Quality", width="small", help="🟢 high | 🟡 medium | 🔴 low"),
-                            "Keyword Overlap": st.column_config.TextColumn("Keywords", width="small", help="Number of common keywords")
+                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large")
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
-                                'Confidence', 'Keyword Overlap',
                                 'Matched Requirement', 'Match Source', 'Historical Comments', 'Historical Responses'],
                         key="historical_table"
                     )

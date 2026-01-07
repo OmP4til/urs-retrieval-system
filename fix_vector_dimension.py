@@ -1,11 +1,11 @@
 """
-Fix PostgreSQL table to support 768-dimensional embeddings (all-mpnet-base-v2)
+Fix PostgreSQL table to support 1024-dimensional embeddings (intfloat/e5-large-v2)
 """
 
 import psycopg2
 
 def fix_vector_dimension():
-    """Update the requirements table to support 768-dimensional vectors"""
+    """Update the requirements table to support 1024-dimensional vectors"""
     try:
         conn = psycopg2.connect(
             host='localhost',
@@ -30,7 +30,7 @@ def fix_vector_dimension():
             print(f"Current embedding column: {result}")
         
         # Drop and recreate the table with correct dimensions
-        print("\n🔄 Recreating table with 768-dimensional vectors...")
+        print("\n🔄 Recreating table with 1024-dimensional vectors...")
         
         cur.execute("DROP TABLE IF EXISTS requirements CASCADE")
         
@@ -38,7 +38,7 @@ def fix_vector_dimension():
             CREATE TABLE requirements (
                 id SERIAL PRIMARY KEY,
                 requirement TEXT NOT NULL,
-                embedding vector(768),
+                embedding vector(1024),
                 metadata JSONB,
                 document_name TEXT,
                 comments TEXT,
@@ -57,7 +57,7 @@ def fix_vector_dimension():
         
         conn.commit()
         
-        print("✅ Table recreated successfully with 768-dimensional vectors!")
+        print("✅ Table recreated successfully with 1024-dimensional vectors!")
         print("✅ Created IVFFlat index for fast similarity search")
         
         cur.close()
@@ -70,10 +70,10 @@ def fix_vector_dimension():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("FIX VECTOR DIMENSION FOR all-mpnet-base-v2")
+    print("FIX VECTOR DIMENSION FOR intfloat/e5-large-v2")
     print("=" * 60)
     print("\nThis will recreate the requirements table with:")
-    print("  - 768-dimensional vectors (all-mpnet-base-v2)")
+    print("  - 1024-dimensional vectors (intfloat/e5-large-v2)")
     print("  - IVFFlat index for fast similarity search")
     print("=" * 60)
     
