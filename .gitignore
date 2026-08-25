@@ -67,3 +67,6 @@ logs/
 # Temporary files
 tmp/
 temp/.env
+
+# Office lock files
+~$*
