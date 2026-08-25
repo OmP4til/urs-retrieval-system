@@ -4,13 +4,14 @@ These 332 records were created with all-mpnet-base-v2 (768d) but the new
 model is intfloat/e5-large-v2 (1024d), so they're incompatible.
 """
 import psycopg2
+from utils.postgres_vectorstore_gemini import get_db_password
 
 conn = psycopg2.connect(
     host='localhost',
     port=5433,
     database='urs_gemini',
     user='postgres',
-    password='Patil1234'
+    password=get_db_password()
 )
 cur = conn.cursor()
 

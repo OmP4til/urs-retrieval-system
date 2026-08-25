@@ -3,6 +3,7 @@ Fix PostgreSQL table to support 1024-dimensional embeddings (intfloat/e5-large-v
 """
 
 import psycopg2
+from utils.postgres_vectorstore_gemini import get_db_password
 
 def fix_vector_dimension():
     """Update the requirements table to support 1024-dimensional vectors"""
@@ -12,7 +13,7 @@ def fix_vector_dimension():
             port=5433,
             database='urs_gemini',
             user='postgres',
-            password='Patil1234'
+            password=get_db_password()
         )
         cur = conn.cursor()
         

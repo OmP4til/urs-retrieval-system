@@ -16,6 +16,25 @@ from datetime import datetime
 
 load_dotenv()
 
+
+def get_db_password() -> str:
+    """
+    Read the Postgres password from the environment.
+
+    Accepts POSTGRES_PASSWORD or DB_PASSWORD so existing .env files keep
+    working. There is deliberately no default - a credential committed to the
+    repository is a credential published to anyone who can read it.
+    """
+    password = os.getenv('POSTGRES_PASSWORD') or os.getenv('DB_PASSWORD')
+    if not password:
+        raise RuntimeError(
+            "Database password not set. Add POSTGRES_PASSWORD (or DB_PASSWORD) "
+            "to your .env file - see .env.example. It is intentionally not "
+            "hardcoded."
+        )
+    return password
+
+
 class PostgresVectorStoreGemini:
     def __init__(self):
         """Initialize connection to urs_gemini database"""
@@ -24,7 +43,7 @@ class PostgresVectorStoreGemini:
             'port': int(os.getenv('POSTGRES_PORT', '5433')),
             'database': os.getenv('POSTGRES_DB', 'urs_gemini'),
             'user': os.getenv('POSTGRES_USER', 'postgres'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'Patil1234')
+            'password': get_db_password()
         }
         
         # Initialize embedding model - using intfloat/e5-large-v2 for superior semantic understanding

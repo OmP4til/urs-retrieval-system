@@ -3,13 +3,14 @@ Check how comments are stored for the URS Coating Machine document
 """
 import psycopg2
 import json
+from utils.postgres_vectorstore_gemini import get_db_password
 
 conn = psycopg2.connect(
     host='localhost',
     port=5433,
     database='urs_gemini',
     user='postgres',
-    password='Patil1234'
+    password=get_db_password()
 )
 cur = conn.cursor()
 

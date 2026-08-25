@@ -160,7 +160,7 @@ http://localhost:8501
 - **Host:** localhost:5433
 - **Database:** urs_gemini
 - **User:** postgres
-- **Password:** Patil1234
+- **Password:** set `POSTGRES_PASSWORD` (or `DB_PASSWORD`) in `.env` — see `.env.example`
 
 ### Master Database (Excel)
 - **File:** URS Response Automation Master Database.xlsm

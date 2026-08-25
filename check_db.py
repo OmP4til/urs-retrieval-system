@@ -1,11 +1,12 @@
 import psycopg2
+from utils.postgres_vectorstore_gemini import get_db_password
 
 conn = psycopg2.connect(
     host='localhost',
     port=5433,
     database='urs_gemini',
     user='postgres',
-    password='Patil1234'
+    password=get_db_password()
 )
 cur = conn.cursor()
 

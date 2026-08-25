@@ -4,6 +4,7 @@ Run this once when switching from all-MiniLM-L6-v2 (384d) to all-mpnet-base-v2 (
 """
 
 import psycopg2
+from utils.postgres_vectorstore_gemini import get_db_password
 
 def clear_old_embeddings():
     """Clear old embeddings from PostgreSQL database"""
@@ -13,7 +14,7 @@ def clear_old_embeddings():
             port=5433,
             database='urs_gemini',
             user='postgres',
-            password='Patil1234'
+            password=get_db_password()
         )
         cur = conn.cursor()
         
