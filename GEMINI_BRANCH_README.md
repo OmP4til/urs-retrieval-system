@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `gemini` branch has been completely restructured to use **only** Gemini 2.5 Flash for holistic requirement extraction, with a dedicated PostgreSQL database (`urs_gemini`) separate from the main branch.
+The `gemini` branch has been completely restructured to use **only** Gemini 3.6 Flash for holistic requirement extraction, with a dedicated PostgreSQL database (`urs_gemini`) separate from the main branch.
 
 ## Key Changes
 
@@ -26,7 +26,7 @@ The `gemini` branch has been completely restructured to use **only** Gemini 2.5 
   ```
 
 ### 🧠 Extraction Method
-- **Only Gemini 2.5 Flash**: No traditional or enhanced rule-based extraction
+- **Only Gemini 3.6 Flash**: No traditional or enhanced rule-based extraction
 - **Holistic Analysis**: Complete document understanding without restrictions
 - **Consistent Approach**: Same logic as `standalone_holistic_extraction.py`
 
@@ -67,7 +67,7 @@ streamlit run app/main_gemini.py --server.port 8502
 
 **Features:**
 - ✅ File upload with holistic extraction
-- ✅ Real-time processing with Gemini 2.5 Flash
+- ✅ Real-time processing with Gemini 3.6 Flash
 - ✅ Analysis summary (categories, priorities)
 - ✅ Database storage with comments
 - ✅ Search functionality
@@ -136,7 +136,7 @@ vs.clear_database()
 
 ### Gemini Branch (`gemini-preprocessing`)
 - Uses `urs_gemini` database
-- Only Gemini 2.5 Flash extraction
+- Only Gemini 3.6 Flash extraction
 - Enhanced schema with comments and matched documents
 - Simplified, focused interface
 

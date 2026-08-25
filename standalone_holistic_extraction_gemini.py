@@ -2,7 +2,7 @@
 """
 Standalone Holistic Extraction Script for Gemini Branch
 
-This script performs comprehensive holistic extraction using Gemini 2.5 Flash
+This script performs comprehensive holistic extraction using Gemini 3.6 Flash
 and saves results directly to the dedicated urs_gemini PostgreSQL database.
 
 Usage:
@@ -155,7 +155,7 @@ def main():
     """Main function to handle command line arguments and process document"""
     
     parser = argparse.ArgumentParser(
-        description="Holistic requirement extraction using Gemini 2.5 Flash for urs_gemini database",
+        description="Holistic requirement extraction using Gemini 3.6 Flash for urs_gemini database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

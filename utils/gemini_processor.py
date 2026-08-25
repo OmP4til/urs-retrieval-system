@@ -20,13 +20,13 @@ class GeminiProcessor:
     Processes documents using Gemini Pro for intelligent requirement extraction.
     """
     
-    def __init__(self, api_key: str, model_name: str = "models/gemini-2.5-flash"):
+    def __init__(self, api_key: str, model_name: str = "models/gemini-3.6-flash"):
         """
         Initialize the Gemini processor with API key.
         
         Args:
             api_key: Google AI API key for Gemini Pro
-            model_name: Gemini model to use (default: models/gemini-2.5-flash)
+            model_name: Gemini model to use (default: models/gemini-3.6-flash)
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -39,7 +39,7 @@ class GeminiProcessor:
     
     def extract_requirements_holistically(self, full_document_text: str, document_name: str = "Technical Document") -> List[Dict[str, Any]]:
         """
-        Let Gemini 2.5 Flash analyze the entire document holistically and extract requirements 
+        Let Gemini 3.6 Flash analyze the entire document holistically and extract requirements 
         in its own intelligent way without structural restrictions.
         
         Args:
@@ -107,7 +107,7 @@ class GeminiProcessor:
         
         try:
             # Use Gemini's full potential with a large context window
-            logger.info(f"Analyzing document with Gemini 2.5 Flash - {len(full_document_text)} characters")
+            logger.info(f"Analyzing document with Gemini 3.6 Flash - {len(full_document_text)} characters")
             
             response = self.model.generate_content(prompt)
             

@@ -9,7 +9,7 @@ load_dotenv()
 
 # Gemini Pro API Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Set this as an environment variable
-GEMINI_MODEL = "models/gemini-2.5-flash"  # Updated to use the correct model name
+GEMINI_MODEL = "models/gemini-3.6-flash" #Experimental model
 
 # Processing Configuration
 USE_GEMINI_PREPROCESSING = True  # Set to True to enable Gemini preprocessing

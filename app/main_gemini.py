@@ -32,8 +32,8 @@ except ImportError:
     MASTER_DB_AVAILABLE = False
     st.warning("⚠️ Master Database module not available. Will skip master database check.")
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from the parent directory
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 def extract_clean_comments(comments_data) -> List[Dict[str, str]]:
     """
@@ -167,7 +167,7 @@ def init_master_database():
             # Use absolute path relative to project root
             import os
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            excel_path = os.path.join(project_root, "URS Response Automation Master Database.xlsm")
+            excel_path = os.path.join(project_root, "URS Response Automation Master Database (1).xlsm")
             master_db = MasterDatabase(excel_path)
             return master_db
         return None
