@@ -16,6 +16,9 @@ from datetime import datetime
 
 load_dotenv()
 
+# Recall/speed knob for the HNSW vector index; see search_similar_requirements.
+HNSW_EF_SEARCH = int(os.getenv("HNSW_EF_SEARCH", "200"))
+
 
 def get_db_password() -> str:
     """
@@ -307,7 +310,17 @@ class PostgresVectorStoreGemini:
         try:
             conn = psycopg2.connect(**self.connection_params)
             cur = conn.cursor()
-            
+
+            # Raise HNSW search breadth. The default (40) is tuned for speed;
+            # this workload cares about recall, and the cost is negligible.
+            # Below ~1000 rows Postgres picks a sequential scan anyway, which
+            # is exact - this only takes effect once the table is large enough
+            # for the planner to use the index.
+            try:
+                cur.execute("SET hnsw.ef_search = %s", (HNSW_EF_SEARCH,))
+            except psycopg2.Error:
+                conn.rollback()   # index type without this knob
+
             # First check if there are any requirements in the database
             cur.execute("SELECT COUNT(*) FROM requirements")
             total_count = cur.fetchone()[0]

@@ -140,6 +140,11 @@ def _extract_text_from_docx_pythondocx(uploaded_file) -> str:
         return ""
 
 
+try:
+    from config import EMBEDDING_CACHE_SIZE
+except ImportError:
+    EMBEDDING_CACHE_SIZE = 20000
+
 OOXML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 # Note: The following imports have external dependencies that must be installed.
@@ -333,8 +338,11 @@ class IntelligentTextMatcher:
             embedding = self.model.encode(["query: " + text])[0]
             self._cache[text] = embedding
             
-            # Limit cache size
-            if len(self._cache) > 1000:
+            # Limit cache size. A miss costs a full e5-large encode (~180 ms
+            # on CPU), so the cache needs to comfortably hold a large master
+            # database plus a document's requirements. 20k entries of 1024
+            # float32 is roughly 80 MB.
+            if len(self._cache) > EMBEDDING_CACHE_SIZE:
                 # Remove oldest entry
                 oldest_key = next(iter(self._cache))
                 del self._cache[oldest_key]
