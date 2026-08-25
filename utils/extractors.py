@@ -1,5 +1,6 @@
 
 import io
+import os
 import re
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -56,15 +57,52 @@ def _extract_table_rows(table, _depth: int = 0) -> List[str]:
     return lines
 
 
-def extract_text_from_docx(uploaded_file) -> str:
+def extract_text_from_docx(uploaded_file, filename: str = "document.docx") -> str:
     """
     Extract complete text content from a DOCX file for holistic analysis.
-    
+
+    Routes to the parser named by config.DOC_PARSER ("docling" or
+    "python-docx"), falling back to python-docx if Docling is unavailable or
+    fails. Both return the same layout: one line per paragraph, table cells
+    joined with " | ".
+
     Args:
-        uploaded_file: Streamlit uploaded file object or file-like object
-        
+        uploaded_file: Streamlit uploaded file object, file-like object, or path
+        filename: Original name, used to pick the suffix for Docling's temp file
+
     Returns:
         Complete text content of the document
+    """
+    try:
+        from config import DOC_PARSER
+    except ImportError:
+        DOC_PARSER = "python-docx"
+
+    if DOC_PARSER == "docling":
+        try:
+            from utils import docling_parser
+            if docling_parser.is_available():
+                name = filename
+                if not hasattr(uploaded_file, 'read'):
+                    name = os.path.basename(str(uploaded_file))
+                text = docling_parser.parse_upload(uploaded_file, name)
+                if text and text.strip():
+                    return text
+                print("Docling returned no text; falling back to python-docx")
+            else:
+                print("Docling not installed; falling back to python-docx")
+        except Exception as e:
+            print(f"Docling parsing failed ({e}); falling back to python-docx")
+
+    return _extract_text_from_docx_pythondocx(uploaded_file)
+
+
+def _extract_text_from_docx_pythondocx(uploaded_file) -> str:
+    """
+    Original python-docx reader. Kept as the fallback and as the fast path.
+
+    Reads body paragraphs plus every table, recursing into nested tables (which
+    doc.tables does not list and cell.text does not include).
     """
     try:
         # Read file bytes

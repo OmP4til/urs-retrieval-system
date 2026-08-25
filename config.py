@@ -27,6 +27,20 @@ SAMPLES_DIR = DATA_DIR / "samples"
 MASTER_DB_PATH = Path(os.getenv("MASTER_DB_PATH", DATA_DIR / "master_database.xlsm"))
 
 # --------------------------------------------------------------------------- #
+# Word document parser
+#
+# "docling"     - Docling's structured document model. Reads noticeably more
+#                 from nested tables: 365 vs 268 requirements on
+#                 Novugen_URS IGL, 331 vs 238 on the GLATT document.
+# "python-docx" - the original reader. No extra dependency, ~20x faster
+#                 (0.1s vs 2.8s), and the fallback if Docling errors.
+#
+# Comments are unaffected either way - they are read from the DOCX comment
+# parts directly, which Docling does not expose.
+# --------------------------------------------------------------------------- #
+DOC_PARSER = os.getenv("DOC_PARSER", "docling").strip().lower()
+
+# --------------------------------------------------------------------------- #
 # Unlimited-OCR (local model, no API key needed)
 # Weights: https://huggingface.co/baidu/Unlimited-OCR (~3.4 GB, BF16)
 # --------------------------------------------------------------------------- #

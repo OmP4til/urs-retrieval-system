@@ -17,3 +17,7 @@ easydict==1.13
 pymupdf==1.27.2.2
 psutil==7.2.2
 accelerate>=1.0.0
+
+# Optional: Docling document parser (config DOC_PARSER=docling)
+# Reads noticeably more from nested tables than python-docx.
+docling>=2.122.0
