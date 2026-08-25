@@ -66,6 +66,15 @@ cannot.
 | [standalone_holistic_extraction_ocr.py](standalone_holistic_extraction_ocr.py) | CLI runner |
 | [test_unlimited_ocr_extraction.py](test_unlimited_ocr_extraction.py) | Tests stage 2 with no weights needed; `--with-model` runs the full pipeline |
 | [requirements-unlimited-ocr.txt](requirements-unlimited-ocr.txt) | Extra deps pinned to Baidu's tested versions |
+| [docs/UNLIMITED_OCR_MATCHING.md](docs/UNLIMITED_OCR_MATCHING.md) | Exactly how extraction and matching work, with the real thresholds |
+
+Everything the app does not import lives in two folders, so the project root
+only holds what you actually run:
+
+| Folder | Contents |
+|---|---|
+| [docs/](docs/) | Reference and historical documentation |
+| [scripts/](scripts/) | One-off maintenance and debugging scripts (DB checks, embedding migrations, diagnostics). Not imported by the app; run them directly. |
 
 `config.py` holds the `UNLIMITED_OCR_*` settings and no longer defines any
 `GEMINI_*` values.

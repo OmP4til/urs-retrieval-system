@@ -152,7 +152,7 @@ with st.expander("ℹ️ About Semantic Matching (Meaning-Based)", expanded=Fals
     - `0.60-0.74`: Moderate (related concepts)
     - `0.40-0.59`: Weak (some similarity)
     
-    📖 See `SEMANTIC_MATCHING_GUIDE.md` for detailed examples and technical info.
+    📖 See `docs/SEMANTIC_MATCHING_GUIDE.md` for detailed examples and technical info.
     """)
 
 # ---------------- Initialize Vector Store (same as standalone script) ----------------
