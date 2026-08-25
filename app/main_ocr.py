@@ -170,12 +170,12 @@ def init_master_database():
     """Initialize the master database layer."""
     try:
         if MASTER_DB_AVAILABLE:
-            # Use absolute path relative to project root
-            import os
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            excel_path = os.path.join(project_root, "URS Response Automation Master Database (1).xlsm")
-            master_db = MasterDatabase(excel_path)
-            return master_db
+            from config import MASTER_DB_PATH
+            if not MASTER_DB_PATH.exists():
+                st.warning(f"⚠️ Master database not found at {MASTER_DB_PATH}. "
+                           "Set MASTER_DB_PATH in .env to point at it.")
+                return None
+            return MasterDatabase(str(MASTER_DB_PATH))
         return None
     except Exception as e:
         st.warning(f"⚠️ Could not initialize master database: {e}")

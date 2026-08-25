@@ -11,7 +11,7 @@ Usage:
     python standalone_holistic_extraction_ocr.py <file_path> [options]
 
 Example:
-    python standalone_holistic_extraction_ocr.py "G_URS Tablet Coating Machine 1.pdf" --comments "Initial analysis"
+    python standalone_holistic_extraction_ocr.py "data/samples/G_URS Tablet Coating Machine 1.pdf" --comments "Initial analysis"
 """
 
 import sys

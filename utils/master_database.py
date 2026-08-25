@@ -17,13 +17,18 @@ class MasterDatabase:
     Provides semantic matching between new requirements and existing ones.
     """
     
-    def __init__(self, excel_path: str = "URS Response Automation Master Database.xlsm"):
+    def __init__(self, excel_path: str = None):
         """
         Initialize the master database interface.
-        
+
         Args:
-            excel_path: Path to the Excel master database file
+            excel_path: Path to the Excel master database file. Defaults to
+                config.MASTER_DB_PATH, which is anchored to the project root
+                rather than the working directory.
         """
+        if excel_path is None:
+            from config import MASTER_DB_PATH
+            excel_path = str(MASTER_DB_PATH)
         self.excel_path = excel_path
         self.df = None
         self.semantic_matcher = None

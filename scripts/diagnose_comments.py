@@ -84,7 +84,9 @@ def get_comments_with_text(file_path: str):
         return text_to_comments
 
 # Path to the document
-doc_path = r"C:\vv\URS Coating Machine Rev 1 - GLATT comments 03092025.docx"
+from config import SAMPLES_DIR
+
+doc_path = str(SAMPLES_DIR / "URS Coating Machine Rev 1 - GLATT comments 03092025.docx")
 
 print("Analyzing URS Coating Machine document...")
 print("=" * 100)

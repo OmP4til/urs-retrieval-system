@@ -97,54 +97,70 @@ first, then `intfloat/e5-large-v2` similarity above 0.75. That logic is reused.
 python test_unlimited_ocr_extraction.py
 
 # Full pipeline, inspect without touching the database
-python standalone_holistic_extraction_ocr.py "G_URS Tablet Coating Machine 1.pdf" \
+python standalone_holistic_extraction_ocr.py "data/samples/G_URS Tablet Coating Machine 1.pdf" \
     --no-db --dump-json reqs.json --parsed-output ./ocr_out
 
 # Full pipeline into the urs_gemini database
-python standalone_holistic_extraction_ocr.py "G_URS Tablet Coating Machine 1.pdf" \
+python standalone_holistic_extraction_ocr.py "data/samples/G_URS Tablet Coating Machine 1.pdf" \
     --comments "Initial analysis"
 
 # Streamlit app
 streamlit run app/main_ocr.py
 ```
 
-## Verified so far
+## Verified
 
-On this machine, without the model weights (DOCX and PDF text layers):
+Stage 2 (structuring), on documents with a text layer:
 
-- `G_URS Tablet Coating Machine 1.pdf` — 139 requirements: 68 critical, 38 high,
-  28 medium, 5 low; 20 with technical parameters, 5 citing standards
+- `URS for Tablet Coating Machine 1.doc` — 143 requirements (legacy .doc,
+  converted via Word COM)
 - `URS Coating Machine Rev 1 - GLATT comments 03092025.docx` — 67 requirements
   (all unique), 63 paired with their GLATT comments and authors; comment-only
   mode returns 109 commented segments
 
-Stage 1 (the OCR model itself) is **not yet verified** — see below.
+Stage 1 (the OCR model itself), on a genuinely scanned PDF with **zero**
+extractable text:
 
-## Hardware requirements — read before running `--with-model`
+- `9 URS-Auto Tablet Coating 75kg 18.08.2025.pdf`, 6 pages, at the app's
+  defaults (300 DPI, base, `infer_multi`): **925 s ≈ 15.4 min**, 20,416
+  characters, 54 requirements. Model load 13 s, ~7.6 GB RAM.
+- Single page at 200 DPI: 147 s. So roughly **2.5 min/page** on CPU.
+
+## Hardware requirements — read before running OCR
 
 The weights are 3.34 GB in BF16. With activations and a 32k-token KV cache you
-want **~6 GB+ of free VRAM**.
+want **~6 GB+ of free VRAM** to run on GPU.
 
-**This machine's GPU cannot run it.** The NVIDIA T1000 has 4 GB total (~1.9 GB
+**This machine's GPU cannot hold it.** The NVIDIA T1000 has 4 GB total (~2 GB
 free) and is Turing (SM 7.5), which has no native bfloat16 and cannot use the
 `fa3` attention backend the upstream SGLang recipe requires.
-`_select_device_and_dtype()` detects this and falls back to CPU float32 —
-correct results, but expect **minutes per page**.
+`_select_device_and_dtype()` detects this and falls back to **CPU in bfloat16**
+— correct results at roughly 2.5 minutes per page.
+
+Two things had to be worked around for CPU to run at all, both in
+`utils/unlimited_ocr_processor.py`:
+
+- `modeling_unlimitedocr.py` calls `.cuda()` on its input tensors in 14 places
+  regardless of where the model was loaded. `_install_cpu_cuda_shim()`
+  redirects those to no-ops when CUDA is genuinely unavailable.
+- CPU must use bfloat16, not float32: the model casts image tensors to
+  bfloat16 unconditionally, so float32 weights raise a dtype mismatch.
 
 Practical options:
 
-1. **CPU** — works out of the box, slow. Fine for one-off batch runs.
-2. **A bigger GPU** (≥8 GB, Ampere or newer) — the intended path.
-3. **vLLM or SGLang server** — best throughput for many documents; see the
-   upstream README. Not usable on this machine's GPU.
+1. **CPU** — works out of the box, ~2.5 min/page. Fine for occasional documents.
+2. **A bigger GPU** (≥8 GB, Ampere or newer) — seconds per page.
+3. **vLLM or SGLang server** — best throughput in bulk; see the upstream README.
+   Not usable on this machine's GPU.
 
-The environment is also Python 3.13 with a CPU-only `torch 2.8.0`, and
-`einops` / `addict` / `easydict` / `torchvision` / `psutil` are missing — all
-needed by the model's `trust_remote_code` modules:
+Install the OCR dependencies with:
 
 ```bash
 pip install -r requirements-unlimited-ocr.txt
 ```
+
+Note that pin set installs `torch` **CPU-only** on Windows. Nothing uses the
+GPU until a CUDA build is installed.
 
 ## Tuning stage 2
 

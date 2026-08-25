@@ -23,7 +23,9 @@ sys.path.insert(0, 'c:\\vv')
 
 from utils.unlimited_ocr_processor import UnlimitedOCRProcessor, RequirementStructurer
 
-DEFAULT_PDF = r"C:\vv\G_URS Tablet Coating Machine 1.pdf"
+from config import SAMPLES_DIR
+
+DEFAULT_PDF = str(SAMPLES_DIR / "G_URS Tablet Coating Machine 1.pdf")
 
 
 def report(requirements, source_label):
