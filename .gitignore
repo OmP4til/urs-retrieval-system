@@ -70,3 +70,6 @@ temp/.env
 
 # Office lock files
 ~$*
+
+# Cached master-database embeddings (rebuilt automatically)
+.*.emb.*.npy
