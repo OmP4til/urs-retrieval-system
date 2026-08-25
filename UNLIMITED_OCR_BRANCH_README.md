@@ -52,6 +52,29 @@ layer cannot.
 `UNLIMITED_OCR_*` settings. The Gemini path is left intact — flip
 `EXTRACTION_BACKEND=gemini` to get it back.
 
+`app/main_gemini.py` now builds its processor through `get_processor()` instead
+of constructing `GeminiProcessor` directly, so the Streamlit app follows
+`EXTRACTION_BACKEND` too. It shows the active backend in a caption, only demands
+`GEMINI_API_KEY` when the Gemini backend is selected, and routes PDFs/images
+through the OCR model (DOCX keeps using its native text layer).
+
+## Comment handling
+
+The app's two comment-aware modes are supported on both backends —
+`UnlimitedOCRProcessor` implements `extract_comments_and_responses` and
+`extract_requirements_with_comments_holistically` with signatures identical to
+the Gemini ones.
+
+This costs nothing in accuracy: comment extraction and requirement pairing were
+already LLM-free on the Gemini branch. Comments come from the DOCX comment parts
+(`get_docx_comments_with_text_mapping`) and are paired by exact substring match
+first, then `intfloat/e5-large-v2` similarity above 0.75. That logic is reused
+verbatim.
+
+Verified on `URS Coating Machine Rev 1 - GLATT comments 03092025.docx`:
+67 requirements (67 unique, no duplicates), 63 of them paired with their GLATT
+comments and authors; comment-only mode returns 109 commented segments.
+
 ## Usage
 
 ```bash

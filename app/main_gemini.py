@@ -16,13 +16,19 @@ from typing import List, Dict, Any
 from utils.postgres_vectorstore_gemini import PostgresVectorStoreGemini
 from utils.extractors import extract_text_from_docx, extract_text_from_file
 
-# Import Gemini processor for holistic extraction
+# Import the extraction backend selected by config.EXTRACTION_BACKEND
+# ("unlimited_ocr" = local Baidu Unlimited-OCR model, "gemini" = Gemini API)
 try:
-    from utils.gemini_processor import GeminiProcessor
+    from utils.processor_factory import get_processor
+    from config import EXTRACTION_BACKEND
     GEMINI_PROCESSOR_AVAILABLE = True
 except ImportError:
     GEMINI_PROCESSOR_AVAILABLE = False
-    st.error("❌ Gemini processor not available. Please ensure utils/gemini_processor.py exists.")
+    EXTRACTION_BACKEND = "gemini"
+    st.error("❌ Extraction processor not available. Please ensure utils/processor_factory.py exists.")
+
+USING_GEMINI = EXTRACTION_BACKEND == "gemini"
+BACKEND_LABEL = "Gemini" if USING_GEMINI else "Unlimited-OCR"
 
 # Import Master Database Layer
 try:
@@ -32,8 +38,8 @@ except ImportError:
     MASTER_DB_AVAILABLE = False
     st.warning("⚠️ Master Database module not available. Will skip master database check.")
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from the parent directory
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 def extract_clean_comments(comments_data) -> List[Dict[str, str]]:
     """
@@ -167,7 +173,7 @@ def init_master_database():
             # Use absolute path relative to project root
             import os
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            excel_path = os.path.join(project_root, "URS Response Automation Master Database.xlsm")
+            excel_path = os.path.join(project_root, "URS Response Automation Master Database (1).xlsm")
             master_db = MasterDatabase(excel_path)
             return master_db
         return None
@@ -212,15 +218,17 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ Database error: {str(e)}")
 
-# Check for Gemini API key
+# Check for Gemini API key (only the Gemini backend needs one)
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
-if not gemini_api_key:
+if USING_GEMINI and not gemini_api_key:
     st.error("❌ GEMINI_API_KEY not found in environment variables")
     st.stop()
 
 if not GEMINI_PROCESSOR_AVAILABLE:
-    st.error("❌ Gemini processor not available")
+    st.error("❌ Extraction processor not available")
     st.stop()
+
+st.caption(f"⚙️ Extraction backend: **{BACKEND_LABEL}** (set EXTRACTION_BACKEND to change)")
 
 # ---------------- Document Processing Section ----------------
 st.header("📄 Document Processing")
@@ -316,28 +324,48 @@ if uploaded_file is not None:
                 st.success(f"✅ Loaded {len(requirements)} existing requirements from database")
         
         else:
-            # Process the document with Gemini (new file or forced reprocessing)
-            with st.spinner(f"🧠 Processing {filename} with Gemini..."):
-                # Step 1: Extract text from document (universal extractor)
+            # Process the document (new file or forced reprocessing)
+            with st.spinner(f"🧠 Processing {filename} with {BACKEND_LABEL}..."):
+                # Step 1: Initialize the configured extraction processor
+                st.info(f"🧠 Initializing {BACKEND_LABEL} processor...")
+                gemini = get_processor()
+                st.success(f"✅ {BACKEND_LABEL} processor initialized")
+
+                # Step 2: Get text out of the document.
+                # The OCR backend parses PDFs/images with the vision model; DOCX
+                # has a native text layer, so it is read directly either way.
                 st.info("📄 Extracting text from document...")
-                uploaded_file.seek(0)
-                full_text = extract_text_from_file(uploaded_file, filename)
-                
+                is_docx = filename.lower().endswith(('.docx', '.doc'))
+
+                if not USING_GEMINI and not is_docx:
+                    import tempfile as _tempfile
+                    uploaded_file.seek(0)
+                    suffix = os.path.splitext(filename)[1] or '.pdf'
+                    with _tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+                    try:
+                        st.info("🔍 Running Unlimited-OCR on the document pages...")
+                        full_text = gemini.parse_document(tmp_path)
+                    finally:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+                else:
+                    uploaded_file.seek(0)
+                    full_text = extract_text_from_file(uploaded_file, filename)
+
                 if not full_text or len(full_text.strip()) < 100:
                     st.error("❌ Failed to extract meaningful text from document")
                     st.error(f"Extracted text length: {len(full_text) if full_text else 0}")
                     st.stop()
-                
+
                 st.success(f"✅ Extracted {len(full_text):,} characters from document")
-                
+
                 # Get file bytes for DOCX comment extraction
                 uploaded_file.seek(0)
-                file_bytes = uploaded_file.read() if filename.lower().endswith('.docx') else None
-                
-                # Step 2: Initialize Gemini processor
-                st.info("🧠 Initializing Gemini processor...")
-                gemini = GeminiProcessor(gemini_api_key)
-                st.success("✅ Gemini processor initialized")
+                file_bytes = uploaded_file.read() if is_docx else None
                 
                 # Step 3: Choose extraction type based on processing mode
                 # Initialize variables for broader scope
@@ -350,7 +378,8 @@ if uploaded_file is not None:
                     
                     comments_data = gemini.extract_comments_and_responses(
                         full_document_text=full_text,
-                        document_name=filename
+                        document_name=filename,
+                        file_bytes=file_bytes
                     )
                     
                     if not comments_data:
@@ -368,8 +397,12 @@ if uploaded_file is not None:
                         
                         for item in comments_data:
                             for comment in item.get('comments', []):
-                                authors.add(comment.get('author', 'Unknown'))
-                                comment_types.add(comment.get('comment_type', 'response'))
+                                if isinstance(comment, dict):
+                                    authors.add(comment.get('author', 'Unknown'))
+                                    comment_types.add(comment.get('comment_type', 'response'))
+                                else:
+                                    authors.add('Unknown')
+                                    comment_types.add('text')
                         
                         col1, col2, col3 = st.columns(3)
                         with col1:
@@ -391,8 +424,12 @@ if uploaded_file is not None:
                             
                             st.write("**Comments & Responses:**")
                             for j, comment in enumerate(item.get('comments', [])):
-                                st.write(f"**{j+1}. [{comment.get('comment_type', 'response')}] {comment.get('author', 'Unknown')}:**")
-                                st.write(f"_{comment.get('comment_text', '')}_")
+                                if isinstance(comment, dict):
+                                    st.write(f"**{j+1}. [{comment.get('comment_type', 'response')}] {comment.get('author', 'Unknown')}:**")
+                                    st.write(f"_{comment.get('comment_text', '')}_")
+                                elif isinstance(comment, str):
+                                    st.write(f"**{j+1}. [text] Unknown:**")
+                                    st.write(f"_{comment}_")
                             
                             if item.get('page_reference'):
                                 st.caption(f"Page: {item.get('page_reference')}")
@@ -406,10 +443,11 @@ if uploaded_file is not None:
                             
                             for item in comments_data:
                                 for comment in item.get('comments', []):
-                                    comments_metadata.append({
-                                        'text': comment.get('comment_text', ''),
-                                        'author': comment.get('author', 'Unknown'),
-                                        'type': comment.get('comment_type', 'response'),
+                                    if isinstance(comment, dict):
+                                        comments_metadata.append({
+                                            'text': comment.get('comment_text', ''),
+                                            'author': comment.get('author', 'Unknown'),
+                                            'type': comment.get('comment_type', 'response'),
                                         'associated_requirement': item.get('requirement_text', '')
                                     })
                             
@@ -473,8 +511,13 @@ if uploaded_file is not None:
                                     comment_types = set()
                                     for pair in paired_reqs:
                                         for comment in pair.get('comments', []):
-                                            authors.add(comment.get('author', 'Unknown'))
-                                            comment_types.add(comment.get('comment_type', 'response'))
+                                            # Handle both dict and string comments
+                                            if isinstance(comment, dict):
+                                                authors.add(comment.get('author', 'Unknown'))
+                                                comment_types.add(comment.get('comment_type', 'response'))
+                                            elif isinstance(comment, str):
+                                                authors.add('Unknown')
+                                                comment_types.add('text')
                                     
                                     st.write("**👥 Comment Authors:**")
                                     for author in sorted(authors):

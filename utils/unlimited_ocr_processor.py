@@ -351,6 +351,83 @@ class UnlimitedOCRProcessor:
         logger.info("Extracted %d requirements from %s", len(requirements), document_name)
         return requirements
 
+    def extract_comments_and_responses(self,
+                                       full_document_text: str,
+                                       document_name: str = "Document",
+                                       file_bytes: Optional[bytes] = None) -> List[Dict[str, Any]]:
+        """
+        Extract commented requirements and their comments/responses.
+
+        Matches GeminiProcessor.extract_comments_and_responses. Comments come
+        straight from the DOCX comment parts - that is exact structural data, so
+        no model is involved and nothing is guessed.
+        """
+        if not file_bytes or not document_name.lower().endswith('.docx'):
+            logger.warning("Comment extraction needs DOCX file bytes; got %s - returning no comments",
+                           document_name)
+            return []
+
+        structured = _load_docx_comments(file_bytes)
+        if not structured:
+            logger.info("No comments found in %s", document_name)
+            return []
+
+        results = []
+        for i, (commented_text, comments) in enumerate(structured.items()):
+            validated = []
+            for c in comments:
+                text = (c.get('text') or '').strip()
+                if text:
+                    validated.append({
+                        'comment_text': text,
+                        'author': (c.get('author') or 'Unknown').strip(),
+                        'comment_type': 'docx_structured',
+                    })
+            if not validated or not commented_text.strip():
+                continue
+            results.append({
+                'id': 'UOCR_COMMENT_REQ_{}'.format(i + 1),
+                'requirement_text': commented_text.strip(),
+                'comments': validated,
+                'page_reference': 'Unknown',
+                'extracted_by': 'unlimited_ocr_docx_comments',
+                'document_name': document_name,
+            })
+
+        logger.info("Extracted %d commented requirements from %s", len(results), document_name)
+        return results
+
+    def extract_requirements_with_comments_holistically(self,
+                                                        full_document_text: str,
+                                                        document_name: str = "Document",
+                                                        file_bytes: Optional[bytes] = None) -> Dict[str, Any]:
+        """
+        Extract requirements and pair them with their DOCX comments.
+
+        Matches GeminiProcessor.extract_requirements_with_comments_holistically:
+        returns {'requirements', 'requirement_comment_pairs', 'total_comments'}.
+        """
+        requirements = self.extract_requirements_holistically(full_document_text, document_name)
+
+        pairs = [{'requirement': req, 'comments': []} for req in requirements]
+
+        structured = {}
+        if file_bytes and document_name.lower().endswith('.docx'):
+            structured = _load_docx_comments(file_bytes)
+            logger.info("Found %d commented text segments in DOCX", len(structured))
+
+        total_comments = 0
+        if structured:
+            total_comments = _pair_comments_to_requirements(pairs, structured)
+
+        return {
+            'requirements': requirements,
+            'requirement_comment_pairs': pairs,
+            'total_comments': total_comments,
+            'comments': [],
+            'comment_mappings': {},
+        }
+
     def extract_requirements_from_file(self,
                                        file_path: str,
                                        document_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -358,6 +435,92 @@ class UnlimitedOCRProcessor:
         text = self.parse_document(file_path)
         return self.extract_requirements_holistically(
             text, document_name or os.path.basename(file_path))
+
+
+# ---------------------------------------------------------------------- #
+# DOCX comment handling (structural - no model involved)
+# ---------------------------------------------------------------------- #
+COMMENT_MATCH_THRESHOLD = 0.75
+
+
+def _load_docx_comments(file_bytes: bytes) -> Dict[str, List[Dict[str, Any]]]:
+    """Read the DOCX comment parts, mapping commented text -> comment records."""
+    try:
+        from utils.extractors import get_docx_comments_with_text_mapping
+        return get_docx_comments_with_text_mapping(file_bytes) or {}
+    except Exception as e:
+        logger.warning("Could not extract structured comments: %s", e)
+        return {}
+
+
+def _pair_comments_to_requirements(pairs: List[Dict[str, Any]],
+                                   structured: Dict[str, List[Dict[str, Any]]]) -> int:
+    """
+    Attach DOCX comments to the requirement each one belongs to.
+
+    Same strategy as the Gemini path: exact substring match first, then semantic
+    similarity above COMMENT_MATCH_THRESHOLD, falling back to word overlap when
+    the embedding matcher is unavailable. Returns the number of comments attached.
+    """
+    try:
+        from utils.extractors import get_semantic_matcher
+        matcher = get_semantic_matcher()
+    except Exception:
+        matcher = None
+        logger.warning("Semantic matcher not available, using word-overlap matching")
+
+    attached = 0
+    for pair in pairs:
+        req_text = (pair['requirement'].get('text') or '').strip()
+        if not req_text:
+            continue
+
+        req_lower = req_text.lower()
+        best = None
+        best_similarity = 0.0
+
+        for docx_text, docx_comments in structured.items():
+            docx_lower = docx_text.lower().strip()
+            if not docx_lower:
+                continue
+
+            if docx_lower in req_lower or req_lower in docx_lower:
+                similarity = 1.0
+            elif matcher:
+                similarity = matcher.calculate_semantic_similarity(req_text, docx_text)
+            else:
+                req_words = set(req_lower.split())
+                docx_words = set(docx_lower.split())
+                similarity = len(req_words & docx_words) / max(len(req_words | docx_words), 1)
+
+            if similarity > best_similarity and similarity > COMMENT_MATCH_THRESHOLD:
+                best_similarity = similarity
+                best = (docx_text, docx_comments, similarity)
+
+        if not best:
+            continue
+
+        matched_text, matched_comments, score = best
+        logger.info("Matched requirement '%s...' to DOCX text (similarity %.2f)",
+                    req_text[:60], score)
+
+        existing = {c.get('comment_text', '') for c in pair['comments']}
+        for docx_comment in matched_comments:
+            comment_text = (docx_comment.get('text') or '').strip()
+            if not comment_text or comment_text in existing:
+                continue
+            pair['comments'].append({
+                'comment_text': comment_text,
+                'author': (docx_comment.get('author') or 'Unknown').strip(),
+                'comment_type': 'docx_structured',
+                'confidence': score,
+                'source': 'docx_structured',
+                'matched_to': matched_text[:100],
+            })
+            existing.add(comment_text)
+            attached += 1
+
+    return attached
 
 
 # ---------------------------------------------------------------------- #
