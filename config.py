@@ -78,9 +78,16 @@ MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.88"))
 # contain, or sit inside, a requirement.
 COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.90"))
 
-# pgvector (1 + cosine) / 2 scale
-POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.85"))   # cosine 0.70
-HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.94"))  # cosine 0.88
+# pgvector (1 + cosine) / 2 scale.
+#
+# Restored to the original 0.30 / 0.70 split so Table 2 is "70% and above" and
+# Table 3 is "below 70%", as before. Note what these mean on this scale: 0.70
+# displayed is cosine 0.40, and e5 scores unrelated URS text around cosine 0.80
+# (0.90 displayed), so most requirements will clear 70%. Raise
+# HISTORICAL_MATCH_THRESHOLD toward 0.94 (cosine 0.88) to make it selective
+# again - both are environment-overridable, no code change needed.
+POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
 
 # Embedding cache entries held in memory (~4 KB each).
 EMBEDDING_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "20000"))
