@@ -4,6 +4,7 @@ Dedicated database connection for Gemini-only extraction and storage
 """
 
 import os
+import re
 import json
 import numpy as np
 from typing import List, Dict, Any, Optional
@@ -44,26 +45,58 @@ class PostgresVectorStoreGemini:
             print(f"Database connection failed: {e}")
             raise
     
-    def add_requirements(self, requirements: List[str], document_name: str, 
-                        comments: Optional[str] = None, 
-                        matched_document_name: Optional[str] = None) -> bool:
+    @staticmethod
+    def _requirement_key(text: str) -> str:
+        """Normalised form used to recognise a requirement already stored."""
+        return re.sub(r'\W+', '', (text or '').lower())
+
+    def _existing_requirement_keys(self, cur, document_name: str) -> set:
+        """
+        Normalised requirement texts already stored for this document.
+
+        Scoped to the document on purpose: the same sentence legitimately
+        appears in different URS documents, and cross-document matching depends
+        on those copies existing.
+        """
+        cur.execute("SELECT requirement FROM requirements WHERE document_name = %s",
+                    (document_name,))
+        return {self._requirement_key(row[0]) for row in cur.fetchall()}
+
+    def add_requirements(self, requirements: List[str], document_name: str,
+                        comments: Optional[str] = None,
+                        matched_document_name: Optional[str] = None,
+                        skip_duplicates: bool = True) -> bool:
         """
         Add requirements to the vector store with enhanced metadata
-        
+
         Args:
             requirements: List of requirement strings
             document_name: Name of the source document
             comments: Optional comments about the requirements
             matched_document_name: Optional name of matched document
-            
+            skip_duplicates: When True (default), requirements already stored for
+                this document are not inserted again, so re-processing a document
+                adds only genuinely new requirements. Also de-duplicates within
+                the incoming batch.
+
         Returns:
-            bool: Success status
+            bool: Success status. Counts land in self.last_add_stats.
         """
         try:
             conn = psycopg2.connect(**self.connection_params)
             cur = conn.cursor()
-            
+
+            seen = self._existing_requirement_keys(cur, document_name) if skip_duplicates else set()
+            added = 0
+            skipped = 0
+
             for req in requirements:
+                key = self._requirement_key(req)
+                if skip_duplicates and (not key or key in seen):
+                    skipped += 1
+                    continue
+                seen.add(key)
+
                 # Generate embedding with E5 passage prefix for document storage
                 embedding = self.model.encode("passage: " + req)
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
@@ -89,12 +122,19 @@ class PostgresVectorStoreGemini:
                     matched_document_name,
                     'holistic'
                 ))
-            
+                added += 1
+
             conn.commit()
             cur.close()
             conn.close()
-            
-            print(f"Ô£à Added {len(requirements)} requirements to urs_gemini database")
+
+            self.last_add_stats = {'added': added, 'skipped': skipped,
+                                   'total': len(requirements)}
+            if skipped:
+                print(f"[OK] Added {added} new requirements to urs_gemini "
+                      f"({skipped} already stored for '{document_name}', skipped)")
+            else:
+                print(f"[OK] Added {added} requirements to urs_gemini database")
             return True
             
         except Exception as e:
@@ -103,23 +143,30 @@ class PostgresVectorStoreGemini:
             traceback.print_exc()
             return False
 
-    def add_requirements_with_individual_comments(self, requirement_comment_pairs: List[Dict], document_name: str, 
-                                                matched_document_name: Optional[str] = None) -> bool:
+    def add_requirements_with_individual_comments(self, requirement_comment_pairs: List[Dict], document_name: str,
+                                                matched_document_name: Optional[str] = None,
+                                                skip_duplicates: bool = True) -> bool:
         """
         Add requirements with their individually associated comments
-        
+
         Args:
             requirement_comment_pairs: List of dicts with 'requirement' and 'comments' keys
             document_name: Name of the source document
             matched_document_name: Optional name of matched document
-            
+            skip_duplicates: When True (default), requirements already stored for
+                this document are not inserted again.
+
         Returns:
-            bool: Success status
+            bool: Success status. Counts land in self.last_add_stats.
         """
         try:
             conn = psycopg2.connect(**self.connection_params)
             cur = conn.cursor()
-            
+
+            seen = self._existing_requirement_keys(cur, document_name) if skip_duplicates else set()
+            added = 0
+            skipped = 0
+
             # Debug: log first pair structure to file
             if requirement_comment_pairs:
                 with open('c:\\vv\\db_debug.log', 'w', encoding='utf-8') as f:
@@ -136,8 +183,14 @@ class PostgresVectorStoreGemini:
                 # Extract requirement text
                 req_text = requirement_obj.get('text', '')
                 if not req_text:
-                    print(f"ÔÜá´©Å Skipping pair with no text: {pair}")
+                    print(f"[!] Skipping pair with no text: {pair}")
                     continue
+
+                key = self._requirement_key(req_text)
+                if skip_duplicates and (not key or key in seen):
+                    skipped += 1
+                    continue
+                seen.add(key)
                 
                 # Generate embedding with E5 passage prefix for document storage
                 embedding = self.model.encode("passage: " + req_text)
@@ -193,12 +246,19 @@ class PostgresVectorStoreGemini:
                     matched_document_name,
                     'precise_pairing'
                 ))
-            
+                added += 1
+
             conn.commit()
             cur.close()
             conn.close()
-            
-            print(f"Ô£à Added {len(requirement_comment_pairs)} requirements with individual comments to database")
+
+            self.last_add_stats = {'added': added, 'skipped': skipped,
+                                   'total': len(requirement_comment_pairs)}
+            if skipped:
+                print(f"[OK] Added {added} new requirements with individual comments "
+                      f"({skipped} already stored for '{document_name}', skipped)")
+            else:
+                print(f"[OK] Added {added} requirements with individual comments to database")
             return True
             
         except Exception as e:

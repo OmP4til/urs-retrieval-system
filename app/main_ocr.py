@@ -639,8 +639,19 @@ if uploaded_file is not None:
                     )
                 
                 if success:
-                    st.success(f"✅ Successfully saved {len(requirements)} requirements to database!")
-                    
+                    stats = getattr(vectorstore, 'last_add_stats', None) or {}
+                    added = stats.get('added', len(requirements))
+                    skipped = stats.get('skipped', 0)
+
+                    if skipped and added:
+                        st.success(f"✅ Saved {added} new requirements "
+                                   f"({skipped} already in the database, skipped)")
+                    elif skipped and not added:
+                        st.info(f"ℹ️ Nothing new to save — all {skipped} requirements "
+                                f"are already stored for this document")
+                    else:
+                        st.success(f"✅ Successfully saved {added} requirements to database!")
+
                     # Debug: Verify what was actually saved
                     st.write("🔍 **Debug: Verifying save by searching...**")
                     verify_reqs = vectorstore.search_requirements_by_document(filename)
