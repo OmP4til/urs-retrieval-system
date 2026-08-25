@@ -72,7 +72,11 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 # --------------------------------------------------------------------------- #
 # Raw cosine scale
 MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.88"))
-COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.75"))
+# 0.75 sat below e5's noise floor: "Spare Part List" scores 0.798 against the
+# unrelated anchor "including the exhaust air duct", while a genuine pairing
+# scores 0.927. Only used when the comment's anchor does not structurally
+# contain, or sit inside, a requirement.
+COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.90"))
 
 # pgvector (1 + cosine) / 2 scale
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.85"))   # cosine 0.70
