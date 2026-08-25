@@ -80,14 +80,20 @@ COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.90"))
 
 # pgvector (1 + cosine) / 2 scale.
 #
-# Restored to the original 0.30 / 0.70 split so Table 2 is "70% and above" and
-# Table 3 is "below 70%", as before. Note what these mean on this scale: 0.70
-# displayed is cosine 0.40, and e5 scores unrelated URS text around cosine 0.80
-# (0.90 displayed), so most requirements will clear 70%. Raise
-# HISTORICAL_MATCH_THRESHOLD toward 0.94 (cosine 0.88) to make it selective
-# again - both are environment-overridable, no code change needed.
+# Measured on 120 Novugen requirements against the live database, the lowest
+# score any requirement scores is 0.90 - so a 0.70 boundary can never reject
+# anything, which is why every requirement was reported as matched and the No
+# Match table stayed empty.
+#
+#   0.90 - 0.93   94 of 120   noise. e5 scores unrelated URS text here
+#   0.94          12 of 120   genuine near-matches begin
+#   0.95 - 0.99   14 of 120   near-identical text
+#
+# 0.94 (cosine 0.88) is where real matches start in exported results, so that
+# is the boundary. Lower it toward 0.90 for more recall and more false
+# positives; both are environment-overridable.
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
-HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.94"))
 
 # Embedding cache entries held in memory (~4 KB each).
 EMBEDDING_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "20000"))
