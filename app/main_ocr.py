@@ -866,6 +866,7 @@ if uploaded_file is not None:
                 # exactly one row now that the layers partition, but counting
                 # the source list keeps this honest either way.
                 total_requirements = len(requirements)
+                _hist_pct = int(round(HISTORICAL_MATCH_THRESHOLD * 100))
                 
                 # Display summary
                 col1, col2, col3, col4 = st.columns(4)
@@ -874,12 +875,12 @@ if uploaded_file is not None:
                 with col2:
                     st.metric("📋 Deviation List Matches", len(deviation_list_data), help="Matched from Excel Master Database")
                 with col3:
-                    st.metric("🗄️ Historical Matches (≥70%)", len(historical_matches_data), help="PostgreSQL matches with similarity ≥ 0.7")
+                    st.metric(f"🗄️ Historical Matches (≥{_hist_pct}%)", len(historical_matches_data), help=f"PostgreSQL matches with similarity ≥ {HISTORICAL_MATCH_THRESHOLD}")
                 with col4:
-                    st.metric("❌ No Match / Low Similarity", len(no_match_data), help="No match or similarity < 0.7")
+                    st.metric("❌ No Match / Low Similarity", len(no_match_data), help=f"No match, or best match below {HISTORICAL_MATCH_THRESHOLD}")
                 
                 st.subheader("📊 Multi-Layer Requirement Matching Results")
-                st.caption("✅ Results split into 3 tables: Deviation List (Master DB), Historical Matches (≥70%), and No Match/Low Similarity (<70%)")
+                st.caption(f"✅ Results split into 3 tables: Deviation List (Master DB), Historical Matches (≥{_hist_pct}%), and No Match / Low Similarity (<{_hist_pct}%). Each requirement appears in exactly one table.")
                 
                 # === TABLE 1: Deviation List (Master Database Matches) ===
                 if deviation_list_data:
@@ -922,10 +923,10 @@ if uploaded_file is not None:
                 else:
                     st.info("ℹ️ No matches found in Master Database")
                 
-                # === TABLE 2: Historical Matches (PostgreSQL ≥70%) ===
+                # === TABLE 2: Historical Matches (PostgreSQL, above threshold) ===
                 if historical_matches_data:
                     st.markdown("---")
-                    st.subheader("🗄️ Table 2: Historical Matches (Similarity ≥ 70%)")
+                    st.subheader(f"🗄️ Table 2: Historical Matches (Similarity ≥ {_hist_pct}%)")
                     st.caption(f"✅ {len(historical_matches_data)} requirements matched from PostgreSQL with high similarity")
                     
                     historical_df = pd.DataFrame(historical_matches_data)
@@ -966,11 +967,16 @@ if uploaded_file is not None:
                 else:
                     st.info("ℹ️ No high-similarity matches found in PostgreSQL")
                 
-                # === TABLE 3: No Match / Low Similarity (<70%) ===
+                # === TABLE 3: No Match, or a match too weak to trust ===
                 if no_match_data:
                     st.markdown("---")
-                    st.subheader("❌ Table 3: No Match / Low Similarity (< 70%)")
-                    st.caption(f"⚠️ {len(no_match_data)} requirements with no match or low similarity - Manual review needed")
+                    st.subheader(f"❌ Table 3: No Match / Low Similarity (< {_hist_pct}%)")
+                    st.caption(
+                        f"⚠️ {len(no_match_data)} requirements needing manual review. "
+                        f"Rows showing 'No historical match found' had nothing above the "
+                        f"search floor. Rows that do show a matched requirement scored "
+                        f"below {_hist_pct}% - the candidate is shown so you can judge it, "
+                        f"but it was **not** accepted as a match.")
                     
                     no_match_df = pd.DataFrame(no_match_data)
                     no_match_df['Deviations'] = ''  # Empty for user input
