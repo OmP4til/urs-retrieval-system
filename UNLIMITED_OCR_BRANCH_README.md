@@ -63,18 +63,34 @@ cannot.
 |---|---|
 | [utils/unlimited_ocr_processor.py](utils/unlimited_ocr_processor.py) | `UnlimitedOCRProcessor` (weights, PDF/image parsing, DOCX comment pairing) and `RequirementStructurer` |
 | [app/main_ocr.py](app/main_ocr.py) | Streamlit app (renamed from `main_gemini.py`) |
-| [standalone_holistic_extraction_ocr.py](standalone_holistic_extraction_ocr.py) | CLI runner |
-| [test_unlimited_ocr_extraction.py](test_unlimited_ocr_extraction.py) | Tests stage 2 with no weights needed; `--with-model` runs the full pipeline |
+| [standalone_holistic_extraction_ocr.py](standalone_holistic_extraction_ocr.py) | CLI entry point — parses a document and writes to the database |
+| [tests/test_unlimited_ocr_extraction.py](tests/test_unlimited_ocr_extraction.py) | Verifies stage 2 with no weights needed; `--with-model` runs the full pipeline |
 | [requirements-unlimited-ocr.txt](requirements-unlimited-ocr.txt) | Extra deps pinned to Baidu's tested versions |
 | [docs/UNLIMITED_OCR_MATCHING.md](docs/UNLIMITED_OCR_MATCHING.md) | Exactly how extraction and matching work, with the real thresholds |
 
-Everything the app does not import lives in two folders, so the project root
-only holds what you actually run:
+## Project layout
 
-| Folder | Contents |
+The root holds only entry points and configuration. Everything else has a home:
+
+| Folder | What goes there |
 |---|---|
+| [app/](app/) | Streamlit UI |
+| [utils/](utils/) | Importable library code — the only place the app imports from |
+| [tests/](tests/) | Automated verification. `test_*.py` lives **only** here, so a future `pytest` run collects exactly these and nothing else. |
+| [scripts/](scripts/) | One-off maintenance and debugging tools, run by hand. Named `check_*` / `fix_*` / `migrate_*` / `diagnose_*` — deliberately never `test_*`. |
 | [docs/](docs/) | Reference and historical documentation |
-| [scripts/](scripts/) | One-off maintenance and debugging scripts (DB checks, embedding migrations, diagnostics). Not imported by the app; run them directly. |
+| [data/](data/) | `master_database.xlsm` plus `samples/`. Never referenced by a hardcoded path — resolve through `config.MASTER_DB_PATH` / `config.SAMPLES_DIR`. |
+
+Rule of thumb: **a file belongs at the root only if you run it directly or
+configure it.** A script that writes to the database is an entry point, not a
+test, however it is named — `standalone_holistic_extraction_ocr.py` stays at the
+root for that reason.
+
+The full convention, including where new files should go, is in
+[CLAUDE.md](CLAUDE.md).
+
+`config.py` holds the `UNLIMITED_OCR_*` settings and no longer defines any
+`GEMINI_*` values.
 
 `config.py` holds the `UNLIMITED_OCR_*` settings and no longer defines any
 `GEMINI_*` values.
@@ -94,7 +110,7 @@ first, then `intfloat/e5-large-v2` similarity above 0.75. That logic is reused.
 
 ```bash
 # Structuring stage only — no weights, no GPU. Good first check.
-python test_unlimited_ocr_extraction.py
+python tests/test_unlimited_ocr_extraction.py
 
 # Full pipeline, inspect without touching the database
 python standalone_holistic_extraction_ocr.py "data/samples/G_URS Tablet Coating Machine 1.pdf" \

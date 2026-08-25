@@ -7,19 +7,21 @@ Two modes:
   text layer to exercise the requirement-structuring stage, so you can validate
   the rules without a GPU or a 3.4 GB download:
 
-      python test_unlimited_ocr_extraction.py
+      python tests/test_unlimited_ocr_extraction.py
 
   Full pipeline - downloads and runs the Unlimited-OCR weights, parsing page
   images with the VLM before structuring:
 
-      python test_unlimited_ocr_extraction.py --with-model
+      python tests/test_unlimited_ocr_extraction.py --with-model
 """
 
 import sys
 import argparse
+from pathlib import Path
 from collections import Counter
 
-sys.path.insert(0, 'c:\\vv')
+# Resolve the project root from this file so the test runs from anywhere.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.unlimited_ocr_processor import UnlimitedOCRProcessor, RequirementStructurer
 
