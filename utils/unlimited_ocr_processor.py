@@ -659,11 +659,19 @@ class RequirementStructurer:
 
     HEADING_RE = re.compile(r'^\s*(?:#{1,6}\s+(?P<h>.+)|(?P<num>\d+(?:\.\d+)*)[.)]?\s+(?P<t>[A-Z][^.]{2,80}))\s*$')
     BULLET_RE = re.compile(r'^\s*(?:[-*+•·]|\(?[a-z0-9]{1,3}[.)])\s+')
-    TABLE_ROW_RE = re.compile(r'^\s*\|(?P<body>.+)\|\s*$')
+    # Row-number cell, e.g. "14" or "3."
+    INDEX_CELL_RE = re.compile(r'^\d{1,3}[.)]?$')
+    # Status/tick columns that carry no requirement text of their own.
+    STATUS_CELL_RE = re.compile(
+        r'^(?:yes|no|y|n|required|not\s+required|mandatory|optional|applicable|'
+        r'not\s+applicable|n\.?\s*/?\s*a\.?|na|nil|none|tbd|ok|✓|✔|×|x)$', re.I)
     NOISE_RE = re.compile(r'^\s*(?:page\s+\d+|\d+\s*/\s*\d+|rev\.?\s*\d+|confidential|table of contents)\s*$', re.I)
 
     MIN_LEN = 25
     MAX_LEN = 1200
+    # A table cell is already a discrete item, so short entries such as
+    # "GA Drawing" or "Spare Part List" are real deliverables, not fragments.
+    TABLE_MIN_LEN = 8
 
     def structure(self, text: str, document_name: str) -> List[Dict[str, Any]]:
         candidates = self._collect_candidates(text)
@@ -671,8 +679,8 @@ class RequirementStructurer:
         requirements: List[Dict[str, Any]] = []
         seen = set()
 
-        for statement, section in candidates:
-            priority, confidence = self._score(statement)
+        for statement, scoring_text, section in candidates:
+            priority, confidence = self._score(scoring_text)
             if priority is None:
                 continue
 
@@ -713,7 +721,7 @@ class RequirementStructurer:
             para = ' '.join(buffer).strip()
             del buffer[:]
             for sentence in self._split_sentences(para):
-                candidates.append((sentence, state['section']))
+                candidates.append((sentence, sentence, state['section'], False))
 
         for line in text.splitlines():
             stripped = line.strip()
@@ -731,20 +739,22 @@ class RequirementStructurer:
                     state['section'] = (heading.group('num') + ' ' + heading.group('t')).strip()
                 continue
 
-            row = self.TABLE_ROW_RE.match(stripped)
-            if row:
+            # Any pipe-delimited line: markdown rows from OCR, and DOCX table
+            # rows, which extract_text_from_docx joins with " | " and which
+            # carry no outer pipes.
+            if '|' in stripped:
                 flush()
-                cells = [c.strip() for c in row.group('body').split('|')]
-                cells = [c for c in cells if c and not set(c) <= set('-: ')]
-                if len(cells) >= 2:
-                    candidates.append((' - '.join(cells), state['section']))
-                elif cells:
-                    candidates.append((cells[0], state['section']))
+                # Score against the whole original row so status cells such as
+                # "Required" still register, but store only the readable part.
+                readable = self._clean_table_row(stripped)
+                if readable:
+                    candidates.append((readable, stripped, state['section'], True))
                 continue
 
             if self.BULLET_RE.match(stripped):
                 flush()
-                candidates.append((self.BULLET_RE.sub('', stripped).strip(), state['section']))
+                bullet = self.BULLET_RE.sub('', stripped).strip()
+                candidates.append((bullet, bullet, state['section'], False))
                 continue
 
             buffer.append(stripped)
@@ -752,22 +762,60 @@ class RequirementStructurer:
         flush()
 
         cleaned = []
-        for raw, section in candidates:
-            statement = self._clean(raw)
+        for raw, scoring_text, section, is_table in candidates:
+            min_len = self.TABLE_MIN_LEN if is_table else self.MIN_LEN
+            statement = self._clean(raw, min_len=min_len)
             if statement:
-                cleaned.append((statement, section))
+                cleaned.append((statement, scoring_text, section))
         return cleaned
+
+    def _clean_table_row(self, line: str) -> str:
+        """
+        Turn a pipe-delimited table row into readable requirement text.
+
+        Drops the leading row number and status/tick columns ("Yes", "Required",
+        "N/A"), which are table scaffolding rather than requirement content, and
+        joins what is left with " - ".
+        """
+        # Word emits non-breaking and narrow spaces inside table cells, which
+        # otherwise stop status cells like "Required" from being recognised.
+        line = re.sub(r'[\xa0  ​]', ' ', line)
+        cells = [re.sub(r'\s+', ' ', c).strip() for c in line.split('|')]
+        kept = []
+        for i, cell in enumerate(cells):
+            if not cell or set(cell) <= set('-–—: '):
+                continue
+            if i == 0 and self.INDEX_CELL_RE.match(cell):
+                continue
+            # Status cells are often punctuated ("Required.", "Yes,").
+            if self.STATUS_CELL_RE.match(cell.strip(' .,;:')):
+                continue
+            if kept and kept[-1].lower() == cell.lower():
+                continue
+            kept.append(cell)
+        return ' - '.join(kept)
 
     @staticmethod
     def _split_sentences(paragraph: str) -> List[str]:
         parts = re.split(r'(?<=[.;:])\s+(?=[A-Z(\d])', paragraph)
         return [p.strip() for p in parts if p.strip()]
 
-    def _clean(self, s: str) -> str:
+    def _clean(self, s: str, min_len: int = None) -> str:
+        s = re.sub(r'[\xa0  ​]', ' ', s)
         s = re.sub(r'\*\*|__|`', '', s).strip()
-        s = re.sub(r'\s{2,}', ' ', s)
+        # "P& ID" -> "P&ID". Requires a word char immediately before the
+        # ampersand, so "Research & Development" is left alone.
+        s = re.sub(r'(?<=\w)&\s+(?=\w)', '&', s)
+        # Leader dots and rules left over from contents pages and form lines.
+        s = re.sub(r'[.]{3,}|[_]{3,}|[-–—]{3,}', ' ', s)
+        # Balance spacing around a slash only when it is already spaced on one
+        # side, so "Parts /TSE" is fixed while units like "kg/L" are untouched.
+        s = re.sub(r'(?<=\S) /(?=\S)', ' / ', s)
+        s = re.sub(r'(?<=\S)/ (?=\S)', ' / ', s)
+        s = re.sub(r'\s+([,;:.])', r'\1', s)
+        s = re.sub(r'\s{2,}', ' ', s).strip()
         s = s.strip(' .;:-')
-        if len(s) < self.MIN_LEN or len(s) > self.MAX_LEN:
+        if len(s) < (self.MIN_LEN if min_len is None else min_len) or len(s) > self.MAX_LEN:
             return ''
         if not re.search(r'[A-Za-z]{3}', s):
             return ''
