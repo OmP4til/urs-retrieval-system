@@ -41,6 +41,32 @@ SPECIAL_TOKEN_RE = re.compile(r'<\|(?:begin|end)_of_[a-z_]+\|>|<\|/?(?:ref|det|g
 
 IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
 
+# Unlimited-OCR emits tables as HTML rather than markdown, so they are converted
+# to pipe-delimited rows that RequirementStructurer already understands.
+TABLE_BLOCK_RE = re.compile(r'<table[^>]*>(.*?)</table>', re.DOTALL | re.I)
+TABLE_ROW_HTML_RE = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.I)
+TABLE_CELL_HTML_RE = re.compile(r'<t[dh][^>]*>(.*?)</t[dh]>', re.DOTALL | re.I)
+HTML_TAG_RE = re.compile(r'<[^>]+>')
+# Leftovers when generation is cut mid-marker, e.g. a dangling "title [116,".
+ORPHAN_DET_RE = re.compile(
+    r'^\s*(?:table|title|text|image|figure|caption|header|footer|list|formula|'
+    r'reference|equation)\s*\[[\d,\s]*\]?\s*$', re.I | re.M)
+
+
+def html_tables_to_rows(text: str) -> str:
+    """Rewrite HTML <table> blocks as pipe-delimited rows, one row per line."""
+    def _convert(match):
+        lines = []
+        for row in TABLE_ROW_HTML_RE.findall(match.group(1)):
+            cells = [HTML_TAG_RE.sub(' ', c) for c in TABLE_CELL_HTML_RE.findall(row)]
+            cells = [re.sub(r'\s+', ' ', c).strip() for c in cells]
+            cells = [c for c in cells if c]
+            if cells:
+                lines.append(' | '.join(cells))
+        return '\n' + '\n'.join(lines) + '\n' if lines else '\n'
+
+    return TABLE_BLOCK_RE.sub(_convert, text)
+
 
 def remove_det(raw: str) -> str:
     """
@@ -149,6 +175,36 @@ def convert_doc_to_docx(src_path: str, out_dir: Optional[str] = None) -> str:
     return dst
 
 
+def _install_cpu_cuda_shim() -> None:
+    """
+    Make the model's hardcoded .cuda() calls no-ops on a CPU-only build.
+
+    modeling_unlimitedocr.py calls .cuda() on its input tensors in 14 places
+    rather than using the module's device, so infer/infer_multi raise
+    "Torch not compiled with CUDA enabled" on a CPU-only install. Its
+    torch.autocast("cuda", ...) blocks disable themselves on such a build, and
+    bfloat16 matmul is supported on CPU, so redirecting .cuda() to a no-op is
+    enough to run the model on CPU.
+
+    Only applied when CUDA is genuinely unavailable, and only once.
+    """
+    import torch
+
+    if torch.cuda.is_available() or getattr(torch, '_uocr_cpu_shim', False):
+        return
+
+    def _tensor_cuda(self, *args, **kwargs):
+        return self
+
+    def _module_cuda(self, *args, **kwargs):
+        return self
+
+    torch.Tensor.cuda = _tensor_cuda
+    torch.nn.Module.cuda = _module_cuda
+    torch._uocr_cpu_shim = True
+    logger.warning("CPU-only torch: redirecting the model's hardcoded .cuda() calls to no-ops")
+
+
 def _select_device_and_dtype() -> Tuple[str, Any]:
     """
     Pick the best device/dtype this machine can actually run.
@@ -160,9 +216,11 @@ def _select_device_and_dtype() -> Tuple[str, Any]:
     import torch
 
     if not torch.cuda.is_available():
-        logger.warning("CUDA not available - running Unlimited-OCR on CPU (float32). "
-                       "This works but is slow; expect minutes per page.")
-        return 'cpu', torch.float32
+        logger.warning("CUDA not available - running Unlimited-OCR on CPU (bfloat16). "
+                       "This works but is slow; expect many minutes per page.")
+        # bfloat16, not float32: the model casts its image tensors to bfloat16
+        # unconditionally, so float32 weights would raise a dtype mismatch.
+        return 'cpu', torch.bfloat16
 
     props = torch.cuda.get_device_properties(0)
     total_gb = props.total_memory / 1024 ** 3
@@ -173,9 +231,9 @@ def _select_device_and_dtype() -> Tuple[str, Any]:
     if free_gb < 6.0:
         logger.warning(
             "GPU '%s' has %.1f GB free of %.1f GB total - not enough for Unlimited-OCR "
-            "(needs ~6 GB+). Falling back to CPU (float32).",
+            "(needs ~6 GB+). Falling back to CPU (bfloat16).",
             props.name, free_gb, total_gb)
-        return 'cpu', torch.float32
+        return 'cpu', torch.bfloat16
 
     if props.major >= 8:
         return 'cuda', torch.bfloat16
@@ -258,6 +316,9 @@ class UnlimitedOCRProcessor:
             torch_dtype=self._dtype,
             **kwargs,
         )
+        if self._device == 'cpu':
+            _install_cpu_cuda_shim()
+
         self.model = self.model.eval()
         if self._device == 'cuda':
             self.model = self.model.cuda()
@@ -299,6 +360,13 @@ class UnlimitedOCRProcessor:
             text = self._read_saved_results(output_path)
 
         text = SPECIAL_TOKEN_RE.sub('', remove_det(text))
+        # Tables arrive as HTML; turn them into pipe rows the structurer reads.
+        text = html_tables_to_rows(text)
+        # Anything left is stray markup (<img>, <br>, an unclosed <table>).
+        text = HTML_TAG_RE.sub(' ', text)
+        # Drop bbox residue left when generation stops mid-marker.
+        text = ORPHAN_DET_RE.sub('', text)
+        text = re.sub(r'[ \t]{2,}', ' ', text)
         return re.sub(r'\n{3,}', '\n\n', text).strip()
 
     def parse_images(self, image_files: List[str], output_path: Optional[str] = None) -> str:
