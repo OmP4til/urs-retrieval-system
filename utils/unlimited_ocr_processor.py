@@ -91,6 +91,64 @@ def pdf_to_images(pdf_path: str, dpi: int = 300, out_dir: Optional[str] = None) 
     return paths
 
 
+def convert_doc_to_docx(src_path: str, out_dir: Optional[str] = None) -> str:
+    """
+    Convert a legacy Word 97-2003 .doc (OLE2) to .docx.
+
+    python-docx only reads OOXML, so a real .doc yields an empty string and the
+    document looks unreadable. Word is driven over COM through PowerShell, which
+    avoids a pywin32 dependency. Converting to .docx rather than to PDF keeps the
+    exact text layer and preserves tracked comments, so the comment-pairing path
+    keeps working.
+
+    Returns the path to the converted .docx.
+
+    Raises:
+        RuntimeError: Word is unavailable or the conversion failed.
+    """
+    import subprocess
+
+    src = os.path.abspath(src_path)
+    if not os.path.exists(src):
+        raise RuntimeError("File not found: " + src)
+
+    target_dir = out_dir or tempfile.mkdtemp(prefix='doc2docx_')
+    os.makedirs(target_dir, exist_ok=True)
+    dst = os.path.join(target_dir, os.path.splitext(os.path.basename(src))[0] + '.docx')
+
+    # wdFormatDocumentDefault = 16 (.docx). Open read-only so the source is untouched.
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "$w=New-Object -ComObject Word.Application;"
+        "$w.Visible=$false;$w.DisplayAlerts=0;"
+        "try{"
+        f"$d=$w.Documents.Open('{src}',$false,$true);"
+        f"$d.SaveAs2('{dst}',16);"
+        "$d.Close($false);"
+        "Write-Output 'OK'"
+        "}catch{Write-Output ('ERR: '+$_.Exception.Message)}"
+        "finally{$w.Quit()}"
+    )
+
+    logger.info("Converting legacy .doc via Word COM: %s", os.path.basename(src))
+    try:
+        proc = subprocess.run(['powershell', '-NoProfile', '-Command', script],
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError("Could not run Word for .doc conversion: {}".format(e))
+
+    output = (proc.stdout or '').strip()
+    if 'OK' not in output or not os.path.exists(dst):
+        raise RuntimeError(
+            "Failed to convert '{}' from legacy .doc. Word reported: {}. "
+            "Re-save the file as .docx in Word and upload that instead.".format(
+                os.path.basename(src), output or (proc.stderr or '').strip()[:200])
+        )
+
+    logger.info("Converted to %s", dst)
+    return dst
+
+
 def _select_device_and_dtype() -> Tuple[str, Any]:
     """
     Pick the best device/dtype this machine can actually run.
@@ -323,10 +381,16 @@ class UnlimitedOCRProcessor:
             return self.parse_pdf(file_path, output_path=output_path)
         if ext in IMAGE_EXTS:
             return self.parse_images([file_path], output_path=output_path)
-        if ext in ('.docx', '.doc'):
+        if ext == '.docx':
             logger.info("DOCX has a native text layer - reading it directly instead of running OCR")
             from utils.extractors import extract_text_from_docx
             return extract_text_from_docx(file_path)
+
+        if ext == '.doc':
+            # Legacy OLE2 Word: convert to .docx first, then read the text layer.
+            from utils.extractors import extract_text_from_docx
+            converted = convert_doc_to_docx(file_path)
+            return extract_text_from_docx(converted)
 
         raise ValueError("Unsupported file type for Unlimited-OCR parsing: " + ext)
 
@@ -362,7 +426,7 @@ class UnlimitedOCRProcessor:
         Comments come straight from the DOCX comment parts - that is exact
         structural data, so no model is involved and nothing is guessed.
         """
-        if not file_bytes or not document_name.lower().endswith('.docx'):
+        if not file_bytes or not document_name.lower().endswith(('.docx', '.doc')):
             logger.warning("Comment extraction needs DOCX file bytes; got %s - returning no comments",
                            document_name)
             return []
@@ -411,7 +475,7 @@ class UnlimitedOCRProcessor:
         pairs = [{'requirement': req, 'comments': []} for req in requirements]
 
         structured = {}
-        if file_bytes and document_name.lower().endswith('.docx'):
+        if file_bytes and document_name.lower().endswith(('.docx', '.doc')):
             structured = _load_docx_comments(file_bytes)
             logger.info("Found %d commented text segments in DOCX", len(structured))
 

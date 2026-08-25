@@ -24,7 +24,7 @@ from utils.extractors import extract_text_from_docx, extract_text_from_file
 
 # Import the Unlimited-OCR processor (this branch runs the local model only)
 try:
-    from utils.unlimited_ocr_processor import build_processor_from_env
+    from utils.unlimited_ocr_processor import build_processor_from_env, convert_doc_to_docx
     OCR_PROCESSOR_AVAILABLE = True
 except ImportError:
     OCR_PROCESSOR_AVAILABLE = False
@@ -329,9 +329,42 @@ if uploaded_file is not None:
                 # PDFs and images go through the vision model; DOCX has a native
                 # text layer, so it is read directly.
                 st.info("📄 Extracting text from document...")
-                is_docx = filename.lower().endswith(('.docx', '.doc'))
+                lower_name = filename.lower()
+                is_docx = lower_name.endswith('.docx')
+                is_legacy_doc = lower_name.endswith('.doc')
 
-                if not is_docx:
+                # Set by the legacy-.doc branch so comments come from the conversion.
+                converted_docx_bytes = None
+
+                if is_docx:
+                    uploaded_file.seek(0)
+                    full_text = extract_text_from_file(uploaded_file, filename)
+
+                elif is_legacy_doc:
+                    # Word 97-2003 binary format: python-docx cannot read it, so
+                    # convert to .docx with Word first. Comments survive the trip.
+                    import tempfile as _tempfile
+                    st.info("🔄 Legacy .doc detected — converting to .docx with Word...")
+                    uploaded_file.seek(0)
+                    with _tempfile.NamedTemporaryFile(delete=False, suffix='.doc') as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+                    try:
+                        converted = convert_doc_to_docx(tmp_path)
+                        full_text = extract_text_from_docx(converted)
+                        with open(converted, 'rb') as fh:
+                            converted_docx_bytes = fh.read()
+                        st.success("✅ Converted legacy .doc to .docx")
+                    except Exception as conv_err:
+                        st.error(f"❌ Could not read legacy .doc file: {conv_err}")
+                        st.stop()
+                    finally:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+
+                else:
                     import tempfile as _tempfile
                     uploaded_file.seek(0)
                     suffix = os.path.splitext(filename)[1] or '.pdf'
@@ -346,9 +379,6 @@ if uploaded_file is not None:
                             os.unlink(tmp_path)
                         except OSError:
                             pass
-                else:
-                    uploaded_file.seek(0)
-                    full_text = extract_text_from_file(uploaded_file, filename)
 
                 if not full_text or len(full_text.strip()) < 100:
                     st.error("❌ Failed to extract meaningful text from document")
@@ -357,9 +387,13 @@ if uploaded_file is not None:
 
                 st.success(f"✅ Extracted {len(full_text):,} characters from document")
 
-                # Get file bytes for DOCX comment extraction
-                uploaded_file.seek(0)
-                file_bytes = uploaded_file.read() if is_docx else None
+                # Get file bytes for DOCX comment extraction. A legacy .doc uses
+                # the converted .docx, so its comments are read the same way.
+                if is_docx:
+                    uploaded_file.seek(0)
+                    file_bytes = uploaded_file.read()
+                else:
+                    file_bytes = converted_docx_bytes
                 
                 # Step 3: Choose extraction type based on processing mode
                 # Initialize variables for broader scope
