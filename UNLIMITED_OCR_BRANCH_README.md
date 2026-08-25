@@ -2,26 +2,45 @@
 
 Branch: `unlimited-ocr-extraction`
 
-Replaces the Gemini API extraction path with Baidu's **Unlimited-OCR** model
-running locally — no API key, no per-document cost, no data leaving the machine.
+Runs Baidu's **Unlimited-OCR** model locally for requirement extraction — no API
+key, no per-document cost, no data leaving the machine.
 
 - Code: https://github.com/baidu/Unlimited-OCR
 - Weights: https://huggingface.co/baidu/Unlimited-OCR (~3.34 GB, BF16)
 - Paper: https://arxiv.org/abs/2606.23050
 
-## What changed vs. the Gemini branch
+## Branch separation
+
+This branch and the Gemini branch are kept deliberately independent so their
+logic never mixes:
+
+| Branch | Extraction | Entry point |
+|---|---|---|
+| `gemini-preprocessing` | Gemini 3.6 Flash (API) | `app/main_gemini.py`, `standalone_holistic_extraction_gemini.py` |
+| `unlimited-ocr-extraction` | Unlimited-OCR (local) | `app/main_ocr.py`, `standalone_holistic_extraction_ocr.py` |
+
+There is **no runtime backend switch**. This branch contains no Gemini code at
+all — `utils/gemini_processor.py`, the Gemini standalone script, the Gemini docs,
+and the dead Gemini helpers in `utils/extractors.py` are all removed here. To run
+Gemini, check out `gemini-preprocessing`.
+
+Both branches still write to the same `urs_gemini` PostgreSQL database through
+`PostgresVectorStoreGemini`. That naming is historical and deliberately left
+alone — a shared schema is what lets you compare the two extraction approaches on
+the same documents.
+
+## How extraction works
 
 Unlimited-OCR is a document **parsing** VLM built on DeepSeek-OCR. It converts
-page images to structured markdown. It does not do free-form reasoning, so it
-cannot itself return "extract every requirement and judge its priority" the way
-Gemini did. The pipeline is therefore split into two explicit stages:
+page images to structured markdown; it does not do free-form reasoning. So
+extraction is two explicit stages:
 
-| Stage | Gemini branch | This branch |
-|---|---|---|
-| 1. Get text out of the document | `pdfplumber` / `python-docx` text layer | **Unlimited-OCR** parses page images into markdown (tables, headings, layout preserved) |
-| 2. Turn text into requirement records | One Gemini prompt, JSON back | `RequirementStructurer` — deterministic rules over document structure and requirement language |
+| Stage | What runs |
+|---|---|
+| 1. Get text out of the document | **Unlimited-OCR** parses page images into markdown, preserving tables, headings, and layout |
+| 2. Text → requirement records | `RequirementStructurer` — deterministic rules over document structure and requirement language |
 
-Stage 2 output is schema-identical to the Gemini output, so the database,
+Stage 2 emits the same records the Gemini branch produced, so the database,
 embeddings, and matching code are untouched:
 
 ```python
@@ -32,48 +51,35 @@ embeddings, and matching code are untouched:
 }
 ```
 
-Trade-off worth knowing: stage 2 is now rule-based rather than an LLM's
-judgement. It is faster, free, reproducible run-to-run, and inspectable — but it
-will not infer *implicit* requirements from context the way Gemini could. Stage 1
-is a clear upgrade: OCR reads scanned pages and complex tables that the text
-layer cannot.
+Trade-off worth knowing: stage 2 is rule-based rather than an LLM's judgement.
+It is faster, free, reproducible run-to-run, and inspectable — but it will not
+infer *implicit* requirements from context the way Gemini could. Stage 1 is a
+clear upgrade: OCR reads scanned pages and complex tables that a text layer
+cannot.
 
-## New files
+## Files
 
 | File | Purpose |
 |---|---|
-| [utils/unlimited_ocr_processor.py](utils/unlimited_ocr_processor.py) | `UnlimitedOCRProcessor` (model loading, PDF/image parsing) and `RequirementStructurer` (stage 2) |
-| [utils/processor_factory.py](utils/processor_factory.py) | `get_processor()` — returns the backend named by `EXTRACTION_BACKEND` |
-| [standalone_holistic_extraction_ocr.py](standalone_holistic_extraction_ocr.py) | CLI runner, mirrors the Gemini standalone script |
+| [utils/unlimited_ocr_processor.py](utils/unlimited_ocr_processor.py) | `UnlimitedOCRProcessor` (weights, PDF/image parsing, DOCX comment pairing) and `RequirementStructurer` |
+| [app/main_ocr.py](app/main_ocr.py) | Streamlit app (renamed from `main_gemini.py`) |
+| [standalone_holistic_extraction_ocr.py](standalone_holistic_extraction_ocr.py) | CLI runner |
 | [test_unlimited_ocr_extraction.py](test_unlimited_ocr_extraction.py) | Tests stage 2 with no weights needed; `--with-model` runs the full pipeline |
 | [requirements-unlimited-ocr.txt](requirements-unlimited-ocr.txt) | Extra deps pinned to Baidu's tested versions |
 
-`config.py` gains `EXTRACTION_BACKEND` (`unlimited_ocr` by default) plus
-`UNLIMITED_OCR_*` settings. The Gemini path is left intact — flip
-`EXTRACTION_BACKEND=gemini` to get it back.
-
-`app/main_gemini.py` now builds its processor through `get_processor()` instead
-of constructing `GeminiProcessor` directly, so the Streamlit app follows
-`EXTRACTION_BACKEND` too. It shows the active backend in a caption, only demands
-`GEMINI_API_KEY` when the Gemini backend is selected, and routes PDFs/images
-through the OCR model (DOCX keeps using its native text layer).
+`config.py` holds the `UNLIMITED_OCR_*` settings and no longer defines any
+`GEMINI_*` values.
 
 ## Comment handling
 
-The app's two comment-aware modes are supported on both backends —
-`UnlimitedOCRProcessor` implements `extract_comments_and_responses` and
-`extract_requirements_with_comments_holistically` with signatures identical to
-the Gemini ones.
+Both comment modes in the app work here. `UnlimitedOCRProcessor` implements
+`extract_comments_and_responses` and
+`extract_requirements_with_comments_holistically`.
 
 This costs nothing in accuracy: comment extraction and requirement pairing were
 already LLM-free on the Gemini branch. Comments come from the DOCX comment parts
 (`get_docx_comments_with_text_mapping`) and are paired by exact substring match
-first, then `intfloat/e5-large-v2` similarity above 0.75. That logic is reused
-verbatim.
-
-Verified on `URS Coating Machine Rev 1 - GLATT comments 03092025.docx`:
-67 requirements (67 unique, no duplicates), 63 of them paired with their GLATT
-comments and authors; comment-only mode returns 109 commented segments.
+first, then `intfloat/e5-large-v2` similarity above 0.75. That logic is reused.
 
 ## Usage
 
@@ -88,17 +94,22 @@ python standalone_holistic_extraction_ocr.py "G_URS Tablet Coating Machine 1.pdf
 # Full pipeline into the urs_gemini database
 python standalone_holistic_extraction_ocr.py "G_URS Tablet Coating Machine 1.pdf" \
     --comments "Initial analysis"
+
+# Streamlit app
+streamlit run app/main_ocr.py
 ```
 
-In application code:
+## Verified so far
 
-```python
-from utils.processor_factory import get_processor
+On this machine, without the model weights (DOCX and PDF text layers):
 
-processor = get_processor()                     # honours EXTRACTION_BACKEND
-text = processor.parse_document(path)           # OCR backend only
-reqs = processor.extract_requirements_holistically(text, filename)
-```
+- `G_URS Tablet Coating Machine 1.pdf` — 139 requirements: 68 critical, 38 high,
+  28 medium, 5 low; 20 with technical parameters, 5 citing standards
+- `URS Coating Machine Rev 1 - GLATT comments 03092025.docx` — 67 requirements
+  (all unique), 63 paired with their GLATT comments and authors; comment-only
+  mode returns 109 commented segments
+
+Stage 1 (the OCR model itself) is **not yet verified** — see below.
 
 ## Hardware requirements — read before running `--with-model`
 
@@ -107,21 +118,20 @@ want **~6 GB+ of free VRAM**.
 
 **This machine's GPU cannot run it.** The NVIDIA T1000 has 4 GB total (~1.9 GB
 free) and is Turing (SM 7.5), which has no native bfloat16 and cannot use the
-`fa3` attention backend the upstream SGLang recipe requires. `_select_device_and_dtype()`
-detects this and falls back to CPU float32 automatically — correct results, but
-expect **minutes per page** rather than seconds.
+`fa3` attention backend the upstream SGLang recipe requires.
+`_select_device_and_dtype()` detects this and falls back to CPU float32 —
+correct results, but expect **minutes per page**.
 
 Practical options:
 
 1. **CPU** — works out of the box, slow. Fine for one-off batch runs.
-2. **A bigger GPU** (≥8 GB, Ampere or newer) — the intended path. Install the
-   CUDA torch build from `requirements-unlimited-ocr.txt` first.
+2. **A bigger GPU** (≥8 GB, Ampere or newer) — the intended path.
 3. **vLLM or SGLang server** — best throughput for many documents; see the
    upstream README. Not usable on this machine's GPU.
 
-The installed environment is also Python 3.13 with a CPU-only `torch 2.8.0`,
-and `einops` / `addict` / `easydict` / `torchvision` / `psutil` are missing —
-all needed by the model's `trust_remote_code` modules:
+The environment is also Python 3.13 with a CPU-only `torch 2.8.0`, and
+`einops` / `addict` / `easydict` / `torchvision` / `psutil` are missing — all
+needed by the model's `trust_remote_code` modules:
 
 ```bash
 pip install -r requirements-unlimited-ocr.txt
@@ -136,7 +146,4 @@ The rules live in `RequirementStructurer` and are meant to be edited:
 - `CATEGORIES` — keyword lists per category
 - `STANDARD_RE` / `PARAM_RE` — compliance standards and numeric parameters
 - `MIN_LEN` / `MAX_LEN` — candidate length bounds
-
-Current behaviour on `G_URS Tablet Coating Machine 1.pdf` (text layer, 40k chars):
-139 requirements — 68 critical, 38 high, 28 medium, 5 low; 20 carry technical
-parameters and 5 cite compliance standards.
+- `COMMENT_MATCH_THRESHOLD` — DOCX comment pairing threshold (0.75)

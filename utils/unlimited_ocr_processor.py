@@ -1,10 +1,11 @@
 """
 Unlimited-OCR integration for requirement extraction and preprocessing.
 
-Drop-in replacement for `utils.gemini_processor.GeminiProcessor` that runs
-Baidu's Unlimited-OCR vision-language model (https://github.com/baidu/Unlimited-OCR,
-weights: https://huggingface.co/baidu/Unlimited-OCR) locally instead of calling
-the Gemini API.
+Runs Baidu's Unlimited-OCR vision-language model locally - no API, no key, no
+data leaving the machine.
+
+  code:    https://github.com/baidu/Unlimited-OCR
+  weights: https://huggingface.co/baidu/Unlimited-OCR
 
 Two stages:
   1. Document parsing - the OCR VLM turns page images into structured markdown.
@@ -130,8 +131,8 @@ class UnlimitedOCRProcessor:
     """
     Processes documents using Baidu's Unlimited-OCR for requirement extraction.
 
-    API-compatible with GeminiProcessor: `extract_requirements_holistically`
-    returns the same requirement dicts, so callers swap one class for the other.
+    Emits the same requirement dicts the Gemini branch produced, so the
+    database, embeddings, and matching code work unchanged.
     """
 
     def __init__(self,
@@ -338,8 +339,8 @@ class UnlimitedOCRProcessor:
         """
         Extract requirements from parsed document text.
 
-        Signature and return shape match GeminiProcessor.extract_requirements_holistically
-        so this class is a drop-in replacement.
+        Return shape matches what the Gemini branch produced, so downstream
+        storage and matching are unchanged.
         """
         if not full_document_text or len(full_document_text.strip()) < 50:
             logger.warning("Document text too short for analysis")
@@ -358,9 +359,8 @@ class UnlimitedOCRProcessor:
         """
         Extract commented requirements and their comments/responses.
 
-        Matches GeminiProcessor.extract_comments_and_responses. Comments come
-        straight from the DOCX comment parts - that is exact structural data, so
-        no model is involved and nothing is guessed.
+        Comments come straight from the DOCX comment parts - that is exact
+        structural data, so no model is involved and nothing is guessed.
         """
         if not file_bytes or not document_name.lower().endswith('.docx'):
             logger.warning("Comment extraction needs DOCX file bytes; got %s - returning no comments",
@@ -404,8 +404,7 @@ class UnlimitedOCRProcessor:
         """
         Extract requirements and pair them with their DOCX comments.
 
-        Matches GeminiProcessor.extract_requirements_with_comments_holistically:
-        returns {'requirements', 'requirement_comment_pairs', 'total_comments'}.
+        Returns {'requirements', 'requirement_comment_pairs', 'total_comments'}.
         """
         requirements = self.extract_requirements_holistically(full_document_text, document_name)
 

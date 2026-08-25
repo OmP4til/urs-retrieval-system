@@ -1,6 +1,12 @@
 """
-Streamlit App for Gemini Branch - Only Gemini Holistic Extraction
-Uses dedicated urs_gemini PostgreSQL database
+Streamlit App for the Unlimited-OCR branch - local OCR extraction only.
+
+Documents are parsed by Baidu's Unlimited-OCR model and requirements are
+structured from the parsed markdown. No Gemini, no API key.
+
+Storage still uses the urs_gemini PostgreSQL database and the
+PostgresVectorStoreGemini class - those names are historical, the schema is
+shared with the Gemini branch so both can be compared on the same data.
 """
 
 import sys
@@ -16,19 +22,13 @@ from typing import List, Dict, Any
 from utils.postgres_vectorstore_gemini import PostgresVectorStoreGemini
 from utils.extractors import extract_text_from_docx, extract_text_from_file
 
-# Import the extraction backend selected by config.EXTRACTION_BACKEND
-# ("unlimited_ocr" = local Baidu Unlimited-OCR model, "gemini" = Gemini API)
+# Import the Unlimited-OCR processor (this branch runs the local model only)
 try:
-    from utils.processor_factory import get_processor
-    from config import EXTRACTION_BACKEND
-    GEMINI_PROCESSOR_AVAILABLE = True
+    from utils.unlimited_ocr_processor import build_processor_from_env
+    OCR_PROCESSOR_AVAILABLE = True
 except ImportError:
-    GEMINI_PROCESSOR_AVAILABLE = False
-    EXTRACTION_BACKEND = "gemini"
-    st.error("❌ Extraction processor not available. Please ensure utils/processor_factory.py exists.")
-
-USING_GEMINI = EXTRACTION_BACKEND == "gemini"
-BACKEND_LABEL = "Gemini" if USING_GEMINI else "Unlimited-OCR"
+    OCR_PROCESSOR_AVAILABLE = False
+    st.error("❌ Unlimited-OCR processor not available. Please ensure utils/unlimited_ocr_processor.py exists.")
 
 # Import Master Database Layer
 try:
@@ -218,17 +218,11 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ Database error: {str(e)}")
 
-# Check for Gemini API key (only the Gemini backend needs one)
-gemini_api_key = os.environ.get("GEMINI_API_KEY")
-if USING_GEMINI and not gemini_api_key:
-    st.error("❌ GEMINI_API_KEY not found in environment variables")
+if not OCR_PROCESSOR_AVAILABLE:
+    st.error("❌ Unlimited-OCR processor not available")
     st.stop()
 
-if not GEMINI_PROCESSOR_AVAILABLE:
-    st.error("❌ Extraction processor not available")
-    st.stop()
-
-st.caption(f"⚙️ Extraction backend: **{BACKEND_LABEL}** (set EXTRACTION_BACKEND to change)")
+st.caption("⚙️ Extraction: **Unlimited-OCR** (local model — no API key required)")
 
 # ---------------- Document Processing Section ----------------
 st.header("📄 Document Processing")
@@ -325,19 +319,19 @@ if uploaded_file is not None:
         
         else:
             # Process the document (new file or forced reprocessing)
-            with st.spinner(f"🧠 Processing {filename} with {BACKEND_LABEL}..."):
-                # Step 1: Initialize the configured extraction processor
-                st.info(f"🧠 Initializing {BACKEND_LABEL} processor...")
-                gemini = get_processor()
-                st.success(f"✅ {BACKEND_LABEL} processor initialized")
+            with st.spinner(f"🧠 Processing {filename} with Unlimited-OCR..."):
+                # Step 1: Initialize the Unlimited-OCR processor
+                st.info("🧠 Initializing Unlimited-OCR processor...")
+                processor = build_processor_from_env()
+                st.success("✅ Unlimited-OCR processor initialized")
 
                 # Step 2: Get text out of the document.
-                # The OCR backend parses PDFs/images with the vision model; DOCX
-                # has a native text layer, so it is read directly either way.
+                # PDFs and images go through the vision model; DOCX has a native
+                # text layer, so it is read directly.
                 st.info("📄 Extracting text from document...")
                 is_docx = filename.lower().endswith(('.docx', '.doc'))
 
-                if not USING_GEMINI and not is_docx:
+                if not is_docx:
                     import tempfile as _tempfile
                     uploaded_file.seek(0)
                     suffix = os.path.splitext(filename)[1] or '.pdf'
@@ -346,7 +340,7 @@ if uploaded_file is not None:
                         tmp_path = tmp.name
                     try:
                         st.info("🔍 Running Unlimited-OCR on the document pages...")
-                        full_text = gemini.parse_document(tmp_path)
+                        full_text = processor.parse_document(tmp_path)
                     finally:
                         try:
                             os.unlink(tmp_path)
@@ -376,7 +370,7 @@ if uploaded_file is not None:
                     st.info("💬 Extracting comments and responses...")
                     st.info("⏳ Analyzing document for comments, replies, and author information...")
                     
-                    comments_data = gemini.extract_comments_and_responses(
+                    comments_data = processor.extract_comments_and_responses(
                         full_document_text=full_text,
                         document_name=filename,
                         file_bytes=file_bytes
@@ -475,7 +469,7 @@ if uploaded_file is not None:
                     st.info("⏳ Analyzing for both requirements and associated comments...")
                     
                     # Use the new comprehensive extraction method
-                    extraction_result = gemini.extract_requirements_with_comments_holistically(
+                    extraction_result = processor.extract_requirements_with_comments_holistically(
                         full_document_text=full_text,
                         document_name=filename,
                         file_bytes=file_bytes
