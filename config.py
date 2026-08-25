@@ -53,10 +53,27 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 
 # --------------------------------------------------------------------------- #
 # Matching thresholds
-# Documented in docs/UNLIMITED_OCR_MATCHING.md. Kept here for reference; the
-# values are currently applied at their call sites.
+#
+# TWO DIFFERENT SCALES - do not compare these numbers directly.
+#
+#   Master DB and comments use raw cosine similarity from e5-large-v2.
+#   PostgreSQL uses pgvector's cosine distance rescaled as (1 + cosine) / 2,
+#   so 0.94 there means the same as 0.88 here. The old defaults of 0.75 and
+#   0.70 looked comparable but meant cosine 0.75 versus cosine 0.40.
+#
+# e5-large-v2 has a high similarity floor: two unrelated URS requirements score
+# around 0.80, and outright nonsense still scores 0.69. Measured against the
+# 233-row master database, a 0.75 threshold matched 40 of 40 requirements -
+# everything landed in the Deviation List and nothing reached Historical.
+#
+# Tune MASTER_DB_THRESHOLD against documents where you know the right answer.
+# Reference points from that measurement: 0.85 matches 13/40, 0.88 matches
+# 2/40, 0.90 matches none.
 # --------------------------------------------------------------------------- #
-MASTER_DB_THRESHOLD = 0.75        # Excel master database - strict, authoritative
-POSTGRES_SEARCH_THRESHOLD = 0.30  # pgvector recall floor
-HISTORICAL_MATCH_THRESHOLD = 0.70 # promotes a match into the Historical table
-COMMENT_MATCH_THRESHOLD = 0.75    # DOCX comment to requirement pairing
+# Raw cosine scale
+MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.88"))
+COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.75"))
+
+# pgvector (1 + cosine) / 2 scale
+POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.85"))   # cosine 0.70
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.94"))  # cosine 0.88

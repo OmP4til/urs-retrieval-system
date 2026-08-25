@@ -21,6 +21,8 @@ from typing import List, Dict, Any
 # Import Gemini-specific components
 from utils.postgres_vectorstore_gemini import PostgresVectorStoreGemini
 from utils.extractors import extract_text_from_docx, extract_text_from_file
+from config import (MASTER_DB_THRESHOLD, POSTGRES_SEARCH_THRESHOLD,
+                    HISTORICAL_MATCH_THRESHOLD)
 
 # Import the Unlimited-OCR processor (this branch runs the local model only)
 try:
@@ -678,7 +680,7 @@ if uploaded_file is not None:
                     for req in requirements:
                         # Use threshold 0.75 for Master DB - stricter for authoritative source
                         # Ensures high-confidence semantic matches only
-                        match = master_db.search_requirement(req['text'], threshold=0.75)
+                        match = master_db.search_requirement(req['text'], threshold=MASTER_DB_THRESHOLD)
                         if match:
                             master_db_matches[req['text']] = match
                     
@@ -742,7 +744,7 @@ if uploaded_file is not None:
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.3,  # Use 0.3 threshold for cross-document matching
+                            threshold=POSTGRES_SEARCH_THRESHOLD,
                             exclude_document=filename
                         )
                         
@@ -770,7 +772,7 @@ if uploaded_file is not None:
                         else:
                             print(f"   [--] No search results returned from PostgreSQL")
                         
-                        if best_match and best_score >= 0.3:
+                        if best_match and best_score >= POSTGRES_SEARCH_THRESHOLD:
                             # Check if the matched requirement has comments
                             matched_comments = ""
                             matched_responses = ""
@@ -857,8 +859,8 @@ if uploaded_file is not None:
                 
                 # Separate data into three categories
                 deviation_list_data = [x for x in matching_data if x.get('Has Match', '').startswith('Yes - Master DB')]
-                historical_matches_data = [x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) >= 0.7]
-                no_match_data = [x for x in matching_data if x.get('Has Match', '') == 'No' or (x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) < 0.7)]
+                historical_matches_data = [x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) >= HISTORICAL_MATCH_THRESHOLD]
+                no_match_data = [x for x in matching_data if x.get('Has Match', '') == 'No' or (x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) < HISTORICAL_MATCH_THRESHOLD)]
                 
                 # Count requirements, not table rows. Each requirement produces
                 # exactly one row now that the layers partition, but counting

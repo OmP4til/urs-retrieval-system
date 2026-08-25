@@ -81,18 +81,24 @@ class MasterDatabase:
             logger.warning(f"Could not initialize semantic matcher: {e}")
             self.semantic_matcher = None
     
-    def search_requirement(self, requirement_text: str, threshold: float = 0.75) -> Optional[Dict[str, Any]]:
+    def search_requirement(self, requirement_text: str, threshold: float = None) -> Optional[Dict[str, Any]]:
         """
         Search for a similar requirement in the master database using semantic matching.
         
         Args:
             requirement_text: The requirement to search for
-            threshold: Minimum similarity score (0.0-1.0) to consider a match.
-                      Default 0.75 for high-confidence semantic matches.
-            
+            threshold: Minimum raw cosine similarity to consider a match.
+                Defaults to config.MASTER_DB_THRESHOLD. Note e5-large-v2 has a
+                high floor - unrelated requirements score around 0.80 - so a
+                threshold below about 0.85 matches essentially everything.
+
         Returns:
             Dict with match info if found, None otherwise
         """
+        if threshold is None:
+            from config import MASTER_DB_THRESHOLD
+            threshold = MASTER_DB_THRESHOLD
+
         if self.df is None or self.df.empty:
             return None
         

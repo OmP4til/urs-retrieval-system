@@ -264,10 +264,10 @@ Tunable thresholds, all in code:
 
 | Constant | Value | Location |
 |---|---|---|
-| Master DB threshold | 0.75 | `master_database.search_requirement` |
-| PostgreSQL search threshold | 0.30 | `main_ocr.py` search call |
-| Historical table threshold | 0.70 | `main_ocr.py` bucketing |
-| Comment pairing threshold | 0.75 | `COMMENT_MATCH_THRESHOLD` |
+| Master DB threshold | **0.88** raw cosine | `config.MASTER_DB_THRESHOLD` |
+| PostgreSQL search threshold | **0.85** pgvector scale (cosine 0.70) | `config.POSTGRES_SEARCH_THRESHOLD` |
+| Historical table threshold | **0.94** pgvector scale (cosine 0.88) | `config.HISTORICAL_MATCH_THRESHOLD` |
+| Comment pairing threshold | 0.75 raw cosine | `config.COMMENT_MATCH_THRESHOLD` |
 | Candidate scan limit | `min(top_k*10, 200)` | `search_similar_requirements` |
 
 ---
@@ -286,3 +286,38 @@ The 3.34 GB of weights are downloaded, but no PDF has been through the model
 yet. On this machine `torch` is CPU-only and the T1000's 4 GB cannot hold the
 model, so it runs on CPU at roughly **minutes per page**. Treat the first PDF
 run as the real test of Stage 1.
+
+## Similarity scales - two of them
+
+The thresholds are **not** on a common scale, and comparing the numbers
+directly is misleading:
+
+| Layer | Scale | 0.88 cosine equals |
+|---|---|---|
+| Master DB, comment pairing | raw cosine from e5-large-v2 | 0.88 |
+| PostgreSQL | pgvector `(1 + cosine) / 2` | 0.94 |
+
+The original defaults of 0.75 (master) and 0.70 (historical) looked comparable
+but meant cosine **0.75** and cosine **0.40**.
+
+**e5-large-v2 has a high similarity floor.** Measured on real requirements:
+
+| Pair | Cosine |
+|---|---|
+| Genuine match | 0.89 |
+| Two unrelated URS requirements | 0.76 - 0.82 |
+| Outright nonsense vs a requirement | 0.69 |
+
+So a 0.75 master threshold sits *below* the score of unrelated text. Against the
+233-row master database it matched **40 of 40** requirements - every requirement
+landed in the Deviation List and the Historical table was always empty. At 0.85
+it matches 13/40, at 0.88 2/40, at 0.90 none.
+
+The matcher also encodes with e5's `query:` prefix. Without it the model is used
+outside its training regime and the signal-to-noise gap narrows (unrelated text
+scores 0.815 unprefixed versus 0.797 prefixed, while a true match holds near
+0.89). Requirement-to-requirement is a symmetric comparison, so `query:` is used
+on both sides rather than `query:`/`passage:`.
+
+These thresholds are starting points, not settled values. Tune them against
+documents where you know the correct answer.
