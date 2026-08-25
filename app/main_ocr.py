@@ -709,11 +709,10 @@ if uploaded_file is not None:
                     try:
                         req_text = req['text']
                         
-                        # Check if we have a Master DB match first (priority)
-                        master_match_found = False
+                        # Layer 1 wins outright: the master database is the
+                        # authoritative source of agreed responses.
                         if req_text in master_db_matches:
                             master_match = master_db_matches[req_text]
-                            master_match_found = True
                             
                             matching_data.append({
                                 'New Requirement': req_text,
@@ -727,9 +726,16 @@ if uploaded_file is not None:
                                 'Has Match': 'Yes - Master DB',
                                 'Match Type': master_match['match_type']
                             })
+
+                            # The master database is the authoritative source, so
+                            # this requirement is answered. Searching PostgreSQL
+                            # as well would add a second row for the same
+                            # requirement, putting it in two tables at once and
+                            # double-counting the totals.
+                            continue
                         
-                        # ALWAYS search PostgreSQL historical database (even if Master DB match found)
-                        # Use correct search method from PostgresVectorStoreGemini
+                        # Layer 2: only requirements the master database did not
+                        # answer reach the historical search.
                         # Exclude this document in SQL. Doing it here rather than on
                         # the results is what keeps an already-stored copy of the same
                         # document from filling every slot with self-matches.
@@ -854,8 +860,10 @@ if uploaded_file is not None:
                 historical_matches_data = [x for x in matching_data if x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) >= 0.7]
                 no_match_data = [x for x in matching_data if x.get('Has Match', '') == 'No' or (x.get('Has Match', '') == 'Yes - PostgreSQL' and float(x.get('Similarity Score', '0.0')) < 0.7)]
                 
-                # Create enhanced summary statistics
-                total_requirements = len(matching_data)
+                # Count requirements, not table rows. Each requirement produces
+                # exactly one row now that the layers partition, but counting
+                # the source list keeps this honest either way.
+                total_requirements = len(requirements)
                 
                 # Display summary
                 col1, col2, col3, col4 = st.columns(4)
