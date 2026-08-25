@@ -723,7 +723,6 @@ if uploaded_file is not None:
                                 'Matched Requirement': master_match['requirement'],
                                 'Match Source': f"Master DB ({master_match['deviation_id']})",
                                 'Historical Comments': master_match['response'],
-                                'Historical Responses': master_match['response'],
                                 'Similarity Score': f"{master_match['similarity']:.2f}",
                                 'Has Match': 'Yes - Master DB',
                                 'Match Type': master_match['match_type']
@@ -775,7 +774,6 @@ if uploaded_file is not None:
                         if best_match and best_score >= POSTGRES_SEARCH_THRESHOLD:
                             # Check if the matched requirement has comments
                             matched_comments = ""
-                            matched_responses = ""
                             
                             # Get the full requirement data to check for comments
                             full_matched_req = None
@@ -802,17 +800,14 @@ if uploaded_file is not None:
                                                     comment_texts.append(f"[{author}] {text}")
                                             
                                             matched_comments = " | ".join(comment_texts)
-                                            matched_responses = matched_comments  # Use same data for responses
+
                                             
                                             if len(clean_comments) > 3:
                                                 matched_comments += f" ... (+{len(clean_comments) - 3} more)"
-                                                matched_responses = matched_comments
                                         else:
                                             matched_comments = "No comments"
-                                            matched_responses = "No responses"
                                     except Exception as e:
                                         matched_comments = f"Error parsing: {str(e)[:50]}"
-                                        matched_responses = matched_comments
                             
                             matching_data.append({
                                 'New Requirement': req_text,
@@ -821,7 +816,6 @@ if uploaded_file is not None:
                                 'Matched Requirement': best_match['requirement'],
                                 'Match Source': best_match.get('document_name', 'Unknown'),
                                 'Historical Comments': matched_comments or 'No comments',
-                                'Historical Responses': matched_responses or 'No responses',
                                 'Similarity Score': f"{best_score:.2f}",
                                 'Has Match': 'Yes - PostgreSQL',
                                 'Match Type': 'semantic'
@@ -835,7 +829,6 @@ if uploaded_file is not None:
                                 'Matched Requirement': 'No historical match found',
                                 'Match Source': '-',
                                 'Historical Comments': '-',
-                                'Historical Responses': '-',
                                 'Similarity Score': '0.00',
                                 'Has Match': 'No',
                                 'Match Type': '-'
@@ -889,7 +882,7 @@ if uploaded_file is not None:
                     st.caption(f"✅ {len(deviation_list_data)} requirements matched from Excel Master Database")
                     
                     deviation_df = pd.DataFrame(deviation_list_data)
-                    deviation_df['Deviations'] = deviation_df['Historical Responses']
+                    deviation_df['Deviations'] = deviation_df['Historical Comments']
                     
                     column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
                                   'Similarity Score', 'Matched Requirement', 'Match Source']
@@ -932,9 +925,9 @@ if uploaded_file is not None:
                     historical_df = pd.DataFrame(historical_matches_data)
                     historical_df['Deviations'] = ''  # Empty for user input
                     
-                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
-                                  'Similarity Score', 'Matched Requirement', 'Match Source', 
-                                  'Historical Comments', 'Historical Responses']
+                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations',
+                                  'Similarity Score', 'Matched Requirement', 'Match Source',
+                                  'Historical Comments']
                     column_order = [col for col in column_order if col in historical_df.columns]
                     historical_df = historical_df[column_order]
                     
@@ -946,11 +939,10 @@ if uploaded_file is not None:
                             "Deviations": st.column_config.TextColumn("Deviations / Response", max_chars=1000, width="large"),
                             "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
                             "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="large"),
-                            "Historical Comments": st.column_config.TextColumn("Historical Comments", width="large"),
-                            "Historical Responses": st.column_config.TextColumn("Historical Responses", width="large")
+                            "Historical Comments": st.column_config.TextColumn("Historical Comments & Responses", width="large")
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
-                                'Matched Requirement', 'Match Source', 'Historical Comments', 'Historical Responses'],
+                                'Matched Requirement', 'Match Source', 'Historical Comments'],
                         key="historical_table",
                         row_height=90
                     )
@@ -972,17 +964,19 @@ if uploaded_file is not None:
                     st.markdown("---")
                     st.subheader(f"❌ Table 3: No Match / Low Similarity (< {_hist_pct}%)")
                     st.caption(
-                        f"⚠️ {len(no_match_data)} requirements needing manual review. "
-                        f"Rows showing 'No historical match found' had nothing above the "
-                        f"search floor. Rows that do show a matched requirement scored "
-                        f"below {_hist_pct}% - the candidate is shown so you can judge it, "
-                        f"but it was **not** accepted as a match.")
+                        f"⚠️ {len(no_match_data)} requirements with no usable match - "
+                        f"nothing reached {_hist_pct}%, so a response needs writing from "
+                        f"scratch. No matched requirement is shown because none was accepted.")
                     
                     no_match_df = pd.DataFrame(no_match_data)
                     no_match_df['Deviations'] = ''  # Empty for user input
-                    
-                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations', 
-                                  'Similarity Score', 'Matched Requirement', 'Match Source']
+
+                    # Nothing cleared the threshold, so there is no match to
+                    # report. Showing the rejected candidate only invited it to
+                    # be read as a match, so the match columns are dropped
+                    # entirely - this table is the extracted requirements that
+                    # need a response written from scratch.
+                    column_order = ['New Requirement', 'Category', 'Priority', 'Deviations']
                     column_order = [col for col in column_order if col in no_match_df.columns]
                     no_match_df = no_match_df[column_order]
                     
@@ -993,11 +987,9 @@ if uploaded_file is not None:
                         column_config={
                             "Deviations": st.column_config.TextColumn("Deviations / Response (Manual Input Required)", 
                                                                      max_chars=1000, width="large"),
-                            "New Requirement": st.column_config.TextColumn("New Requirement", width="large"),
-                            "Matched Requirement": st.column_config.TextColumn("Matched Requirement", width="medium")
+                            "New Requirement": st.column_config.TextColumn("New Requirement", width="large")
                         },
-                        disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
-                                'Matched Requirement', 'Match Source'],
+                        disabled=['New Requirement', 'Category', 'Priority'],
                         key="no_match_table",
                         row_height=90
                     )
@@ -1023,7 +1015,7 @@ if uploaded_file is not None:
                 all_df = pd.DataFrame(all_data)
                 if 'Deviations' not in all_df.columns:
                     all_df['Deviations'] = all_df.apply(
-                        lambda row: row.get('Historical Responses', '') if row.get('Has Match', '').startswith('Yes - Master DB') else '',
+                        lambda row: row.get('Historical Comments', '') if row.get('Has Match', '').startswith('Yes - Master DB') else '',
                         axis=1
                     )
                 
