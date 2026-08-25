@@ -716,13 +716,13 @@ if uploaded_file is not None:
                             master_match_found = True
                             
                             matching_data.append({
-                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                'New Requirement': req_text,
                                 'Category': req.get('category', 'Unknown'),
                                 'Priority': req.get('priority', 'Unknown'),
-                                'Matched Requirement': master_match['requirement'][:200] + '...' if len(master_match['requirement']) > 200 else master_match['requirement'],
+                                'Matched Requirement': master_match['requirement'],
                                 'Match Source': f"Master DB ({master_match['deviation_id']})",
-                                'Historical Comments': master_match['response'][:150] + '...' if len(master_match['response']) > 150 else master_match['response'],
-                                'Historical Responses': master_match['response'][:150] + '...' if len(master_match['response']) > 150 else master_match['response'],
+                                'Historical Comments': master_match['response'],
+                                'Historical Responses': master_match['response'],
                                 'Similarity Score': f"{master_match['similarity']:.2f}",
                                 'Has Match': 'Yes - Master DB',
                                 'Match Type': master_match['match_type']
@@ -807,10 +807,10 @@ if uploaded_file is not None:
                                         matched_responses = matched_comments
                             
                             matching_data.append({
-                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                'New Requirement': req_text,
                                 'Category': req.get('category', 'Unknown'),
                                 'Priority': req.get('priority', 'Unknown'),
-                                'Matched Requirement': best_match['requirement'][:200] + '...' if len(best_match['requirement']) > 200 else best_match['requirement'],
+                                'Matched Requirement': best_match['requirement'],
                                 'Match Source': best_match.get('document_name', 'Unknown'),
                                 'Historical Comments': matched_comments or 'No comments',
                                 'Historical Responses': matched_responses or 'No responses',
@@ -821,7 +821,7 @@ if uploaded_file is not None:
                         else:
                             # No match found in either database
                             matching_data.append({
-                                'New Requirement': req_text[:200] + '...' if len(req_text) > 200 else req_text,
+                                'New Requirement': req_text,
                                 'Category': req.get('category', 'Unknown'),
                                 'Priority': req.get('priority', 'Unknown'),
                                 'Matched Requirement': 'No historical match found',
@@ -896,7 +896,8 @@ if uploaded_file is not None:
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
                                 'Matched Requirement', 'Match Source'],
-                        key="deviation_table"
+                        key="deviation_table",
+                        row_height=90
                     )
                     
                     # Export button for Deviation List
@@ -939,7 +940,8 @@ if uploaded_file is not None:
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
                                 'Matched Requirement', 'Match Source', 'Historical Comments', 'Historical Responses'],
-                        key="historical_table"
+                        key="historical_table",
+                        row_height=90
                     )
                     
                     # Export button for Historical Matches
@@ -980,7 +982,8 @@ if uploaded_file is not None:
                         },
                         disabled=['New Requirement', 'Category', 'Priority', 'Similarity Score', 
                                 'Matched Requirement', 'Match Source'],
-                        key="no_match_table"
+                        key="no_match_table",
+                        row_height=90
                     )
                     
                     # Export button for No Match
