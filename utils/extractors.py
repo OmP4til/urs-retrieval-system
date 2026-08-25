@@ -10,6 +10,52 @@ from lxml import etree
 import zipfile
 import openpyxl
 
+def _extract_table_rows(table, _depth: int = 0) -> List[str]:
+    """
+    Flatten a python-docx table into "cell | cell | cell" lines.
+
+    Recurses into tables nested inside cells, which python-docx does not expose
+    through doc.tables and does not include in cell.text.
+
+    Horizontally merged cells appear once per underlying grid column in
+    row.cells, so consecutive repeats of the same text are collapsed.
+    """
+    if _depth > 10:          # cyclic or pathological nesting guard
+        return []
+
+    lines = []
+    for row in table.rows:
+        try:
+            cells = list(row.cells)
+        except (IndexError, ValueError):
+            # Malformed grid (irregular spans); skip the row rather than fail.
+            continue
+
+        row_text = []
+        nested_lines = []
+        seen_tc = set()
+        for cell in cells:
+            # A merged cell is returned once per grid column it spans, and each
+            # repeat is the same underlying <w:tc>. Process it once, or its
+            # nested tables get emitted once per span.
+            tc_id = id(cell._tc)
+            if tc_id in seen_tc:
+                continue
+            seen_tc.add(tc_id)
+
+            text = cell.text.strip()
+            if text and (not row_text or row_text[-1] != text):
+                row_text.append(text)
+            for nested in cell.tables:
+                nested_lines.extend(_extract_table_rows(nested, _depth + 1))
+
+        if row_text:
+            lines.append(" | ".join(row_text))
+        lines.extend(nested_lines)
+
+    return lines
+
+
 def extract_text_from_docx(uploaded_file) -> str:
     """
     Extract complete text content from a DOCX file for holistic analysis.
@@ -31,24 +77,24 @@ def extract_text_from_docx(uploaded_file) -> str:
         
         # Load document
         doc = Document(io.BytesIO(file_bytes))
-        
+
         full_text = []
-        
+
         # Extract all paragraph text
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 full_text.append(paragraph.text.strip())
-        
-        # Extract all table text
+
+        # Extract all table text, recursing into nested tables.
+        #
+        # doc.tables only lists top-level tables, and cell.text covers the
+        # cell's own paragraphs but not tables nested inside it. URS documents
+        # are frequently one outer table per section with the real requirements
+        # in an inner table, so without this recursion a large share of the
+        # document is silently dropped.
         for table in doc.tables:
-            for row in table.rows:
-                row_text = []
-                for cell in row.cells:
-                    if cell.text.strip():
-                        row_text.append(cell.text.strip())
-                if row_text:
-                    full_text.append(" | ".join(row_text))
-        
+            full_text.extend(_extract_table_rows(table))
+
         return "\n\n".join(full_text)
         
     except Exception as e:
