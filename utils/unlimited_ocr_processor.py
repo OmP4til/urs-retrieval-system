@@ -20,6 +20,7 @@ provide is reconstructed from document structure and requirement language.
 import os
 import re
 import glob
+import html as _html
 import shutil
 import tempfile
 import logging
@@ -364,6 +365,10 @@ class UnlimitedOCRProcessor:
         text = html_tables_to_rows(text)
         # Anything left is stray markup (<img>, <br>, an unclosed <table>).
         text = HTML_TAG_RE.sub(' ', text)
+        # The model emits HTML entities inside table cells (&amp;, &lt;, &nbsp;).
+        text = _html.unescape(text)
+        # &nbsp; unescapes to U+00A0, which reads as a space but breaks matching.
+        text = re.sub(r'[\xa0  ​]', ' ', text)
         # Drop bbox residue left when generation stops mid-marker.
         text = ORPHAN_DET_RE.sub('', text)
         text = re.sub(r'[ \t]{2,}', ' ', text)
