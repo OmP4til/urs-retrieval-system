@@ -685,10 +685,14 @@ if uploaded_file is not None:
                         
                         # ALWAYS search PostgreSQL historical database (even if Master DB match found)
                         # Use correct search method from PostgresVectorStoreGemini
+                        # Exclude this document in SQL. Doing it here rather than on
+                        # the results is what keeps an already-stored copy of the same
+                        # document from filling every slot with self-matches.
                         search_results = vectorstore.search_similar_requirements(
                             query=req_text,
                             top_k=3,  # Get top 3 matches
-                            threshold=0.3  # Use 0.3 threshold for cross-document matching
+                            threshold=0.3,  # Use 0.3 threshold for cross-document matching
+                            exclude_document=filename
                         )
                         
                         # DEBUG: Log search results
@@ -703,22 +707,17 @@ if uploaded_file is not None:
                         best_score = 0
                         
                         if search_results:
-                            print(f"   Current document name: '{filename}'")
+                            # Same-document rows are already excluded in SQL.
                             for result in search_results:
-                                # Check if this is from a different document
-                                result_filename = result.get('document_name', '')
                                 score = result.get('similarity_score', 0)
-                                print(f"   Comparing: '{result_filename}' != '{filename}' ? {result_filename != filename}, Score: {score:.3f}")
-                                if result_filename != filename and score > best_score:
+                                if score > best_score:
                                     best_match = result
                                     best_score = score
-                            
+
                             if best_match:
-                                print(f"   ✅ Best match: {best_score:.3f} from '{best_match.get('document_name', '')}'")
-                            else:
-                                print(f"   ⚠️ No matches from different documents (all matches are from same document)")
+                                print(f"   [OK] Best match: {best_score:.3f} from '{best_match.get('document_name', '')}'")
                         else:
-                            print(f"   ❌ No search results returned from PostgreSQL")
+                            print(f"   [--] No search results returned from PostgreSQL")
                         
                         if best_match and best_score >= 0.3:
                             # Check if the matched requirement has comments

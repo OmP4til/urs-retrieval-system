@@ -207,16 +207,21 @@ class PostgresVectorStoreGemini:
             traceback.print_exc()
             return False
     
-    def search_similar_requirements(self, query: str, top_k: int = 5, threshold: float = 0.4) -> List[Dict[str, Any]]:
+    def search_similar_requirements(self, query: str, top_k: int = 5, threshold: float = 0.4,
+                                    exclude_document: str = None) -> List[Dict[str, Any]]:
         """
         Search for similar requirements using pgvector's built-in similarity search.
         OPTIMIZED: Uses pgvector's cosine distance operator for efficient search.
-        
+
         Args:
             query: Search query
             top_k: Number of results to return
             threshold: Minimum similarity score (default 0.4 for cross-document matching)
-            
+            exclude_document: Skip requirements belonging to this document. Filtered
+                in SQL, before the top_k cut - filtering afterwards lets a document
+                that is already stored crowd its own near-identical rows into every
+                slot and starve genuine cross-document matches.
+
         Returns:
             List of similar requirements with semantic similarity scores
         """
@@ -243,21 +248,29 @@ class PostgresVectorStoreGemini:
             # <=> returns cosine distance (0 = identical, 2 = opposite)
             # We convert to similarity: similarity = 1 - distance
             # Limit to top_k*10 candidates to scan (reasonable performance)
-            cur.execute("""
-                SELECT 
-                    requirement, 
-                    metadata, 
-                    document_name, 
-                    comments, 
+            where_clause = ""
+            params = [embedding_str]
+            if exclude_document:
+                where_clause = "WHERE document_name IS DISTINCT FROM %s"
+                params.append(exclude_document)
+            params.extend([embedding_str, min(top_k * 10, 200)])
+
+            cur.execute(f"""
+                SELECT
+                    requirement,
+                    metadata,
+                    document_name,
+                    comments,
                     matched_document_name,
                     extraction_type,
                     created_at,
                     embedding,
                     embedding <=> %s::vector as distance
                 FROM requirements
+                {where_clause}
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
-            """, (embedding_str, embedding_str, min(top_k * 10, 200)))
+            """, tuple(params))
             
             results = cur.fetchall()
             print(f"­ƒöì Scanned {len(results)} candidate requirements from PostgreSQL")
