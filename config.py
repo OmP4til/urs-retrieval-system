@@ -67,7 +67,20 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 #      0.70           0.93       genuine match
 #      1.00           1.00       identical text
 # --------------------------------------------------------------------------- #
-MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.70"))
+# Table 1 and Table 2 deliberately use different values, because the two
+# sources have different score ceilings. Measured over 150 requirements:
+#
+#   master database (233 curated rows)   median 0.40, max 0.73
+#   historical (914 stored requirements) reaches 0.91
+#
+# The master workbook is short and independently worded, so nothing ever scores
+# near-verbatim against it; at 0.80 Table 1 can never populate. The historical
+# store contains the documents themselves, so genuine matches reach 0.9+.
+#
+# Keep master at or below historical. If master were the looser of the two by a
+# wide margin it would skim weak matches before the historical search ever ran,
+# which is what produced "2 in Table 1, 0 in Table 2".
+MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.65"))
 COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.70"))
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
 HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.80"))
