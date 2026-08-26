@@ -121,8 +121,12 @@ class PostgresVectorStoreGemini:
                     continue
                 seen.add(key)
 
-                # Generate embedding with E5 passage prefix for document storage
-                embedding = self.model.encode("passage: " + req)
+                # Symmetric prefix: this store is searched requirement-against-
+                # requirement, not short-query-against-document. Storing with
+                # "passage:" while searching with "query:" cost 0.07 cosine even
+                # on identical text - 1.000 became 0.930, which calibrates to
+                # 0.72 and fell below the match threshold.
+                embedding = self.model.encode("query: " + req)
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata
@@ -216,8 +220,8 @@ class PostgresVectorStoreGemini:
                     continue
                 seen.add(key)
                 
-                # Generate embedding with E5 passage prefix for document storage
-                embedding = self.model.encode("passage: " + req_text)
+                # Symmetric prefix - see add_requirements.
+                embedding = self.model.encode("query: " + req_text)
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata with requirement details
