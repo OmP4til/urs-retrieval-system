@@ -80,7 +80,13 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 # Keep master at or below historical. If master were the looser of the two by a
 # wide margin it would skim weak matches before the historical search ever ran,
 # which is what produced "2 in Table 1, 0 in Table 2".
-MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.70"))
+# 0.58, not 0.70. The master workbook holds deviation descriptions, not
+# requirement text, so it is worded differently and its scores top out at 0.73 -
+# at 0.70 only two requirements in a 331-requirement coating URS matched.
+# Inspected by hand, the 0.58 - 0.70 band is genuine: inlet AHU filters, the
+# lifting and positioning device, inlet air temperature, MOC certificates,
+# solution tank and stirrer. False pairs start at about 0.56.
+MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.58"))
 COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.70"))
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
 HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
