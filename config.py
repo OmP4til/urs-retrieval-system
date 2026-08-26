@@ -89,7 +89,14 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.58"))
 COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.70"))
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
-HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
+# 0.60 so genuine paraphrases count, not only near-verbatim text. Embeddings
+# retrieve the right requirement well below 0.70 - "easy to reach for servicing
+# and upkeep" finds "easily accessible to perform maintenance" at 0.77, while
+# "automatically signed out after no activity" finds "automatically log out
+# users after a pre-determined period" at only 0.60. The 0.55 - 0.69 band was
+# inspected on a 331-requirement URS: 40 requirements, overwhelmingly the same
+# requirement reworded. Questionable pairs start below 0.55.
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.60"))
 
 # Embedding cache entries held in memory (~4 KB each).
 EMBEDDING_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "20000"))
