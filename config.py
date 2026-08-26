@@ -80,10 +80,10 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 # Keep master at or below historical. If master were the looser of the two by a
 # wide margin it would skim weak matches before the historical search ever ran,
 # which is what produced "2 in Table 1, 0 in Table 2".
-MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.65"))
+MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.70"))
 COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.70"))
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
-HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.80"))
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
 
 # Embedding cache entries held in memory (~4 KB each).
 EMBEDDING_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "20000"))
