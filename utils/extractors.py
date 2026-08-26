@@ -379,8 +379,11 @@ class IntelligentTextMatcher:
             
             # Apply semantic validation to adjust score based on meaning
             validated_similarity = self._validate_semantic_match(text1, text2, raw_similarity)
-            
-            return validated_similarity
+
+            # Rescale onto the calibrated scale so this matches what the
+            # PostgreSQL layer reports and thresholds mean the same thing here.
+            from utils.similarity import calibrate
+            return calibrate(validated_similarity)
         except Exception as e:
             print(f"Error calculating similarity: {e}")
             return self._keyword_similarity(text1, text2)

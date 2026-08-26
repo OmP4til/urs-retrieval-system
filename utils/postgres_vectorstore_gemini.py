@@ -12,6 +12,8 @@ import psycopg2
 from psycopg2.extras import Json
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
+
+from utils.similarity import calibrate_from_distance
 from datetime import datetime
 
 load_dotenv()
@@ -371,7 +373,8 @@ class PostgresVectorStoreGemini:
             formatted_results = []
             for row in results:
                 distance = float(row[8])
-                similarity = 1.0 - (distance / 2.0)  # Normalize distance to similarity
+                # Calibrated so unrelated text scores ~0 - see utils/similarity.
+                similarity = calibrate_from_distance(distance)
                 
                 if similarity >= threshold:
                     formatted_results.append({

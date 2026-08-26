@@ -54,46 +54,23 @@ UNLIMITED_OCR_CACHE_DIR = os.getenv("UNLIMITED_OCR_CACHE_DIR") or None
 # --------------------------------------------------------------------------- #
 # Matching thresholds
 #
-# TWO DIFFERENT SCALES - do not compare these numbers directly.
+# All four are now on ONE calibrated scale (see utils/similarity.py), where an
+# unrelated pair of requirements scores about 0 and an exact match scores 1.
+# e5-large-v2's raw cosine puts unrelated text at ~0.75 and matches at ~0.95;
+# calibration rescales that back to the spread all-mpnet-base-v2 produced, so
+# these numbers mean what they look like again.
 #
-#   Master DB and comments use raw cosine similarity from e5-large-v2.
-#   PostgreSQL uses pgvector's cosine distance rescaled as (1 + cosine) / 2,
-#   so 0.94 there means the same as 0.88 here. The old defaults of 0.75 and
-#   0.70 looked comparable but meant cosine 0.75 versus cosine 0.40.
-#
-# e5-large-v2 has a high similarity floor: two unrelated URS requirements score
-# around 0.80, and outright nonsense still scores 0.69. Measured against the
-# 233-row master database, a 0.75 threshold matched 40 of 40 requirements -
-# everything landed in the Deviation List and nothing reached Historical.
-#
-# Tune MASTER_DB_THRESHOLD against documents where you know the right answer.
-# Reference points from that measurement: 0.85 matches 13/40, 0.88 matches
-# 2/40, 0.90 matches none.
+#   calibrated   raw e5 cosine   what it is
+#      0.00          <= 0.75     unrelated
+#      0.15           0.79       nearest unrelated pairs
+#      0.30           0.83       recall floor
+#      0.70           0.93       genuine match
+#      1.00           1.00       identical text
 # --------------------------------------------------------------------------- #
-# Raw cosine scale
-MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.88"))
-# 0.75 sat below e5's noise floor: "Spare Part List" scores 0.798 against the
-# unrelated anchor "including the exhaust air duct", while a genuine pairing
-# scores 0.927. Only used when the comment's anchor does not structurally
-# contain, or sit inside, a requirement.
-COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.90"))
-
-# pgvector (1 + cosine) / 2 scale.
-#
-# Measured on 120 Novugen requirements against the live database, the lowest
-# score any requirement scores is 0.90 - so a 0.70 boundary can never reject
-# anything, which is why every requirement was reported as matched and the No
-# Match table stayed empty.
-#
-#   0.90 - 0.93   94 of 120   noise. e5 scores unrelated URS text here
-#   0.94          12 of 120   genuine near-matches begin
-#   0.95 - 0.99   14 of 120   near-identical text
-#
-# 0.94 (cosine 0.88) is where real matches start in exported results, so that
-# is the boundary. Lower it toward 0.90 for more recall and more false
-# positives; both are environment-overridable.
+MASTER_DB_THRESHOLD = float(os.getenv("MASTER_DB_THRESHOLD", "0.70"))
+COMMENT_MATCH_THRESHOLD = float(os.getenv("COMMENT_MATCH_THRESHOLD", "0.70"))
 POSTGRES_SEARCH_THRESHOLD = float(os.getenv("POSTGRES_SEARCH_THRESHOLD", "0.30"))
-HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.94"))
+HISTORICAL_MATCH_THRESHOLD = float(os.getenv("HISTORICAL_MATCH_THRESHOLD", "0.70"))
 
 # Embedding cache entries held in memory (~4 KB each).
 EMBEDDING_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "20000"))
