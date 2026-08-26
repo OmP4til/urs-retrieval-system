@@ -38,6 +38,7 @@ and every layer uses the same scale.
 """
 
 import os
+import re
 
 # Median cosine of unrelated requirement pairs under e5-large-v2.
 SIMILARITY_FLOOR = float(os.getenv("SIMILARITY_FLOOR", "0.75"))
@@ -68,3 +69,37 @@ def calibrate_from_distance(distance: float) -> float:
     score into 0.85 - 0.99.
     """
     return calibrate(1.0 - float(distance))
+
+
+# Leading document section numbers - "5.4.4.13 - ", "8.2.9 ", "4.2 - ".
+#
+# These identify where a requirement sits in one document, not what it asks
+# for, so the same requirement carries a different prefix in every document and
+# the difference dilutes the match. Measured on a real pair that differs only
+# by section number and two typos:
+#
+#     with prefixes     cosine 0.9729 -> calibrated 0.89
+#     prefixes removed  cosine 0.9960 -> calibrated 0.98
+#
+# 100 of 331 requirements in one URS carry such a prefix.
+#
+# The pattern deliberately requires either a multi-part number, or a separator
+# followed by a letter, so measurement ranges survive untouched: "2 - 4 bar",
+# "250L - 300L bowl", "0.4 mm surface roughness", "1 -3 bar".
+SECTION_PREFIX_RE = re.compile(
+    r'^\s*(?:\d+(?:\.\d+)+\s*[-–—:]\s*'      # 5.4.4.13 -
+    r'|\d+(?:\.\d+){2,}\s+'                    # 8.2.9 (three or more parts)
+    r'|\d+\s*[-–—]\s+(?=[A-Za-z]))'             # 4 - Guidelines
+)
+
+
+def normalise_for_embedding(text: str) -> str:
+    """
+    Strip a leading section number before embedding.
+
+    Only affects the vector; the stored and displayed requirement keeps its
+    original text.
+    """
+    if not text:
+        return ""
+    return SECTION_PREFIX_RE.sub("", text).strip() or text.strip()

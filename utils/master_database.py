@@ -119,7 +119,8 @@ class MasterDatabase:
             # Match _get_embedding's normalisation exactly, so the shortlist
             # and the validated re-scoring see the same vectors.
             from utils.extractors import clean_extracted_text
-            texts = ["query: " + clean_extracted_text(str(r)).lower()
+            from utils.similarity import normalise_for_embedding
+            texts = ["query: " + normalise_for_embedding(clean_extracted_text(str(r)).lower())
                      for r in self.df['requirement'].tolist()]
             logger.info("Embedding %d master database requirements (one-off)...", len(texts))
             self._matrix = self.semantic_matcher.model.encode(
@@ -141,7 +142,7 @@ class MasterDatabase:
 
     # Bump when the embedding model or its prefix changes, so cached vectors
     # built under the old scheme are not silently reused.
-    _EMBED_SCHEME = "e5q1"
+    _EMBED_SCHEME = "e5q2sec"
 
     def _matrix_cache_path(self):
         """

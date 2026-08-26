@@ -13,7 +13,7 @@ from psycopg2.extras import Json
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 
-from utils.similarity import calibrate_from_distance
+from utils.similarity import calibrate_from_distance, normalise_for_embedding
 from datetime import datetime
 
 load_dotenv()
@@ -126,7 +126,7 @@ class PostgresVectorStoreGemini:
                 # "passage:" while searching with "query:" cost 0.07 cosine even
                 # on identical text - 1.000 became 0.930, which calibrates to
                 # 0.72 and fell below the match threshold.
-                embedding = self.model.encode("query: " + req)
+                embedding = self.model.encode("query: " + normalise_for_embedding(req))
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata
@@ -221,7 +221,7 @@ class PostgresVectorStoreGemini:
                 seen.add(key)
                 
                 # Symmetric prefix - see add_requirements.
-                embedding = self.model.encode("query: " + req_text)
+                embedding = self.model.encode("query: " + normalise_for_embedding(req_text))
                 embedding_str = '[' + ','.join(map(str, embedding.tolist())) + ']'
                 
                 # Create metadata with requirement details
@@ -339,7 +339,7 @@ class PostgresVectorStoreGemini:
                 return []
             
             # Generate query embedding with E5 query prefix for search
-            query_embedding = self.model.encode(["query: " + query])[0]
+            query_embedding = self.model.encode(["query: " + normalise_for_embedding(query)])[0]
             embedding_str = '[' + ','.join(map(str, query_embedding.tolist())) + ']'
             
             # Use pgvector's <=> operator for cosine distance

@@ -335,7 +335,8 @@ class IntelligentTextMatcher:
             # Measured on real pairs: unrelated text scores 0.815 with no prefix
             # versus 0.797 with it, while a true match holds at ~0.89 - a wider
             # gap between signal and noise.
-            embedding = self.model.encode(["query: " + text])[0]
+            from utils.similarity import normalise_for_embedding
+            embedding = self.model.encode(["query: " + normalise_for_embedding(text)])[0]
             self._cache[text] = embedding
             
             # Limit cache size. A miss costs a full e5-large encode (~180 ms
