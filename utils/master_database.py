@@ -139,12 +139,23 @@ class MasterDatabase:
             self._matrix_failed = True
             return None
 
+    # Bump when the embedding model or its prefix changes, so cached vectors
+    # built under the old scheme are not silently reused.
+    _EMBED_SCHEME = "e5q1"
+
     def _matrix_cache_path(self):
-        """Cache file keyed by workbook size and mtime, so edits invalidate it."""
+        """
+        Cache file keyed by workbook size, mtime and embedding scheme.
+
+        Size and mtime catch edits to the workbook; the scheme tag catches a
+        change of model or prefix, which would otherwise leave vectors that no
+        longer match how queries are encoded.
+        """
         try:
             path = Path(self.excel_path)
             stat = path.stat()
-            return path.with_name(f".{path.stem}.emb.{stat.st_size}.{int(stat.st_mtime)}.npy")
+            return path.with_name(
+                f".{path.stem}.emb.{self._EMBED_SCHEME}.{stat.st_size}.{int(stat.st_mtime)}.npy")
         except OSError:
             return None
     
